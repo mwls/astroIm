@@ -29,6 +29,8 @@ from astropy.coordinates import SkyCoord
 from scipy import interpolate
 import copy
 import pickle
+import aplpy
+import matplotlib.pyplot as plt
 
 # define classes
 
@@ -36,7 +38,7 @@ import pickle
 class astroImage(object):
     
     
-    def __init__(self, filename, ext=0, instrument=None, band=None, unit=None, load=True, FWHM=None):
+    def __init__(self, filename, ext=0, instrument=None, band=None, unit=None, load=True, FWHM=None, dustpediaHeaderCorrect=False):
         if load:
             # load fits file
             fits = pyfits.open(filename)
@@ -46,6 +48,19 @@ class astroImage(object):
             fits = filename
             self.image = fits[ext].data
             self.header = fits[ext].header
+        
+        # correct dustpedia header 
+        if dustpediaHeaderCorrect:
+            keywordAdjust = ["COORDSYS", "SIGUNIT", "TELESCOP", "INSTRMNT", "DETECTOR", "WVLNGTH", "HIPE_CAL"]
+            for keyword in keywordAdjust:
+                if keyword in self.header:
+                    info = self.header[keyword].split("/")
+                    if keyword == "SIGUNIT":
+                        if self.header[keyword][0:10].count("/") > 0:
+                            self.header[keyword] = (info[0]+"/"+info[1],info[2])
+                    else:
+                        self.header[keyword] = (info[0], info[1])    
+
         
         # identify instrument
         if instrument is None:
@@ -95,9 +110,6 @@ class astroImage(object):
         else:
             self.band = band
         
-        # if PACS or SPIRE make sure band is integer
-        if self.instrument == "PACS" or self.instrument == "SPIRE":
-            self.band = str(int(self.band))
         
         # set unit in header if provided
         if unit is not None:
@@ -108,6 +120,10 @@ class astroImage(object):
             if self.band.count("um") > 0:
                 self.band = self.band.split("um")[0]
                 self.bandUnits = "um"
+        
+        # if PACS or SPIRE make sure band is integer
+        if self.instrument == "PACS" or self.instrument == "SPIRE":
+            self.band = str(int(self.band))
     
         # if SCUBA-2, see if standard SCUBA2 image with 3 dimensions, and remove it and extra headings
         if self.instrument == "SCUBA-2" and len(self.image.shape) == 3:
@@ -137,6 +153,11 @@ class astroImage(object):
             if "SIGUNIT" in self.header:
                 self.header['BUNIT'] = self.header["SIGUNIT"]
         
+        if "BUNIT" in self.header:
+            self.unit = self.header['BUNIT']
+        else:
+            self.unit = None
+        
         try:
             self.wavelength = self.standardCentralWavelengths(self.instrument, self.band)
         except:
@@ -159,7 +180,7 @@ class astroImage(object):
         pixSizes = wcs.utils.proj_plane_pixel_scales(WCSinfo)*3600.0
         if np.abs(pixSizes[0]-pixSizes[1]) > 0.0001:
             raise ValueError("PANIC - program does not cope with non-square pixels")
-        self.pixSize = round(pixSizes[0], 6)
+        self.pixSize = round(pixSizes[0], 6) * u.arcsecond
         return round(pixSizes[0], 6)
     
         
@@ -215,7 +236,6 @@ class astroImage(object):
                             (np.isnan(self.image) == False))
         
         # calculate the mean of the pixels and subtract from the image
-        print(len(pixelSel[0]))
         self.image = self.image - self.image[pixelSel].mean()
         
         # if back noise is set, find standard deviation and return value
@@ -224,6 +244,107 @@ class astroImage(object):
             return noise
         else:
             return
+        
+    def ellipseAperture(self, ellipseInfo):
+        # function to select pixels within an elliptical aperture and sum
+        
+        # extract background annulus parameters
+        centreRA = ellipseInfo["centreRA"]
+        centreDEC = ellipseInfo["centreDEC"]
+        radius = ellipseInfo["radius"]
+        PA = ellipseInfo['PA']
+        
+        # see if ra and dec maps already exist, if needed run
+        if hasattr(self, 'raMap') is False:
+            self.coordMaps()
+        
+        # convert PA to radians with correct axes
+        PA = (90.0-PA) / 180.0 * np.pi
+        
+        # adjust D25 to degrees
+        majorRad = radius[0]/(60.0)
+        minorRad = radius[1]/(60.0)
+        
+        # select pixels 
+        pixelSel = np.where((((self.raMap - centreRA)*np.cos(self.decMap / 180.0 * np.pi)*np.cos(PA) + (self.decMap - centreDEC)*np.sin(PA))**2.0 / majorRad**2.0 + \
+                            (-(self.raMap - centreRA)*np.cos(self.decMap / 180.0 * np.pi)*np.sin(PA) + (self.decMap - centreDEC)*np.cos(PA))**2.0/ minorRad**2.0 <= 1.0) &\
+                            (np.isnan(self.image) == False))
+        
+        # calculate the mean of the pixels and subtract from the image
+        apFlux = self.image[pixelSel].sum()
+        
+        # return total in aperture and number of pixels
+        return apFlux, len(pixelSel[0])
+    
+    
+    def circularAperture(self, circleInfo):
+        # function to select pixels within circular aperture and sum
+        
+        # package into a call to ellipseAperture
+        ellipseInfo = circleInfo
+        ellipseInfo['PA'] = 0.0
+        ellipseInfo['radius'] = [circleInfo['radius'], circleInfo['radius']]
+        
+        apFlux, Npix = self.ellipseAperture(ellipseInfo)
+        
+        return apFlux, Npix
+    
+    
+    def rectangularAperture(self, rectangleInfo):
+        # function to select pixels within rectangular aperture and sum
+        
+        # find central pixel
+        wcs = pywcs.WCS(self.header)
+        pixCoord = wcs.wcs_world2pix([rectangleInfo['centreRA']], [rectangleInfo['centreDEC']],0)
+        
+        # calculate size of rectangle
+        if hasattr(self, 'pixSize') is False:
+            self.getPixelSize()
+        
+        xsize = rectangleInfo['size'][0] * 60.0 / self.pixSize.to(u.arcsecond).value
+        ysize = rectangleInfo['size'][1] * 60.0 / self.pixSize.to(u.arcsecond).value
+        
+        # calculate corners of box
+        x1 = int(np.round(pixCoord[0] - xsize / 2.0))
+        x2 = int(np.round(pixCoord[0] + xsize / 2.0))
+        y1 = int(np.round(pixCoord[1] - ysize / 2.0))
+        y2 = int(np.round(pixCoord[1] + ysize / 2.0))
+    
+        # check corner pixels
+        flag = False
+        if x1 < 0:
+            x1 = 0
+            flag = True
+        if x1 >= self.image.shape[1]:
+            x1 = self.image.shape[1] -1
+            flag = True
+        if x2 < 0:
+            x2 = 0
+            flag = True
+        if x2 >= self.image.shape[1]:
+            x2 = self.image.shape[1] -1
+            flag = True
+        if y1 < 0:
+            y1 = 0
+            flag = Truey
+        if y1 >= self.image.shape[0]:
+            y1 = self.image.shape[0] -1
+            flag = True
+        if y2 < 0:
+            y2 = 0
+            flag = True
+        if y2 >= self.image.shape[0]:
+            y2 = self.image.shape[0] -1
+            flag = True
+        
+        # get minimap
+        minimap = self.image[y1:y2+1, x1:x2+1]
+        
+        # select non-nans
+        sel = np.where(np.isnan(minimap) == False)
+        
+        return minimap[sel].sum(), len(sel[0])
+        
     
     def coordMaps(self):
         # function to find ra and dec co-ordinates of every pixel
@@ -271,6 +392,7 @@ class astroImage(object):
         
         return
     
+    
     def standardBeamAreas(self, instrument=None, band=None):
         # define standard beam areas
         beamAreas = {"SCUBA-2":{"450":141.713, "850":246.729}, "SPIRE":{"250":469.4, "350":831.3, "500":1804.3},\
@@ -306,6 +428,7 @@ class astroImage(object):
         if conversion is not None:
             self.image = self.image * conversion
             self.header['BUNIT'] = newUnit
+            self.unit = newUnit
             if "SIGUNIT" in self.header:
                 self.header['SIGUNIT'] = newUnit
             if "ZUNITS" in self.header:
@@ -314,7 +437,7 @@ class astroImage(object):
         else:
             
             # check if unit is programmed
-            units = ["pW", "Jy/arcsec^2", "mJy/arcsec^2", "mJy/arcsec**2", "MJy/sr", "Jy/beam", "mJy/beam", "Jy/pix", "K_CMB"]
+            units = ["pW", "Jy/arcsec^2", "mJy/arcsec^2", "mJy/arcsec**2", "MJy/sr", "Jy/beam", "mJy/beam", "Jy/pix", "mJy/pix", "K_CMB"]
             oldUnit = self.header["BUNIT"]
                         
             # programmed beam areas
@@ -358,6 +481,7 @@ class astroImage(object):
                 if self.instrument == "Planck" and self.header['BUNIT'] == "K_CMB":
                     self.image = self.image * planckConversion[self.band]
                     self.header['BUNIT'] = "MJy/sr"
+                    self.unit = "MJy/sr"
                     oldUnit = "MJy/sr"
                 elif self.header['BUNIT'] == "K_CMB":
                     raise ValueError("Can only process K_CMB from Planck")
@@ -365,7 +489,11 @@ class astroImage(object):
                 ### process the old units
                 if oldUnit == "Jy/pix":
                     conversion = 1.0 * u.Jy
-                    pixArea = self.pixSize * self.pixSize * u.arcsecond**2.0
+                    pixArea = self.pixSize * self.pixSize
+                    conversion = conversion / pixArea
+                elif oldUnit == "mJy/pix":
+                    conversion = 0.001 * u.Jy
+                    pixArea = self.pixSize * self.pixSize
                     conversion = conversion / pixArea
                 elif oldUnit == "Jy/beam":
                     conversion = 1.0 * u.Jy
@@ -387,11 +515,15 @@ class astroImage(object):
                     raise ValueError("Unit not programmed: ", oldUnit)
                                 
                 # convert to new unit
-                if newUnit == "Jy/pix" or newUnit == "Jy/beam" or newUnit == "mJy/beam":
+                if newUnit == "Jy/pix" or newUnit == "mJy/pix" or newUnit == "Jy/beam" or newUnit == "mJy/beam":
                     # convert to Jy per arcsec^2
                     conversion = conversion.to(u.Jy/u.arcsecond**2.0).value
                     if newUnit == "Jy/pix":
-                        conversion = conversion * self.pixSize * self.pixSize
+                        pixArea = self.pixSize * self.pixSize
+                        conversion = conversion * pixArea.to(u.arcsecond**2.0).value 
+                    elif newUnit == "mJy/pix":
+                        pixArea = self.pixSize * self.pixSize
+                        conversion = conversion * pixArea.to(u.arcsecond**2.0).value * 1000.0
                     elif newUnit == "Jy/beam":
                         conversion = conversion * beamAreas[self.instrument][self.band]
                     elif newUnit == "mJy/beam":
@@ -410,6 +542,7 @@ class astroImage(object):
                 
                 self.image = self.image * conversion
                 self.header['BUNIT'] = newUnit
+                self.unit = newUnit
                 if "SIGUNIT" in self.header:
                         self.header['SIGUNIT'] = newUnit
                 if "ZUNITS" in self.header:
@@ -482,7 +615,7 @@ class astroImage(object):
             if imageFWHM > refFWHM:
                 # create kernel ant do convolution
                 predictedNewWave.getPixelScale()
-                kernel = ((np.sqrt(imageFWHM**2.0 - refFWHM**2.0)).to(u.arcsecond).value) / (2.35482 * predictedNewWave.pixSize)
+                kernel = np.sqrt(imageFWHM**2.0 - refFWHM**2.0) 
                 convolvedNewWave = predictedNewWave.convolve(kernel, boundary=['extend'])
                 convolvedCurrWave = predictedCurrWave.convolve(kernel, boundary=['extend'])
                 
@@ -515,7 +648,7 @@ class astroImage(object):
                 ratioMap.image[sel] = np.nanmin(maskedRatio)
             
             # reproject ratio map to match input image
-            ratioMap.reproject(self.header, exact=False)
+            ratioMap = ratioMap.reproject(self.header, exact=False)
             
             # replace nan's caused by no coverage to nan value
             nanPos = np.where(np.isnan(ratioMap.image) == True)
@@ -655,7 +788,7 @@ class astroImage(object):
             if imageFWHM > refFWHM:
                 # create kernel ant do convolution
                 predictedMapWithCC.getPixelScale()
-                kernel = ((np.sqrt(imageFWHM**2.0 - refFWHM**2.0)).to(u.arcsecond).value) / (2.35482 * predictedMapWithCC.pixSize)
+                kernel = np.sqrt(imageFWHM**2.0 - refFWHM**2.0)
                 convolvedCCMapImage = predictedMapWithCC.convolve(kernel, boundary=['extend'])
                 convolvedNoCCMapImage = predictedMapNoCC.convolve(kernel, boundary=['extend'])
                 
@@ -689,7 +822,7 @@ class astroImage(object):
                 ccMap.image[sel] = np.nanmin(maskedRatio)
             
             # reproject ratio map to match input image
-            ccMap.reproject(self.header, exact=False)
+            ccMap = ccMap.reproject(self.header, exact=False)
             
             # replace nan's caused by no coverage to median value
             nanPos = np.where(np.isnan(ccMap.image) == True)
@@ -722,8 +855,9 @@ class astroImage(object):
             self.error = self.error / self.ccData
     
     
-    def reproject(self, projHead, exact=True):
+    def reproject(self, projHead, exact=True, conserveFlux=False):
         # function to reproject the fits image
+        
         
         # create new hdu
         if "PIXTYPE" in self.header and self.header["PIXTYPE"] == "HEALPIX":
@@ -741,14 +875,13 @@ class astroImage(object):
             else:
                 resampleMap, _ = reproject_interp(hdu, projHead)
         
-        self.image = resampleMap
         
         # modify original header
         # projection keywords
         projKeywords = ["NAXIS1", "NAXIS2", "LBOUND1", "LBOUND2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2",\
                         "CTYPE1", "CTYPE2", "CDELT1", "CDELT2", "CD1_1", "CD1_2", "CD2_1", "CD2_2",\
                         "RADESYS", "EQUINOX", "CROTA2", "CROTA1"]
-        header = self.header
+        header = self.header.copy()
         for keyword in projKeywords:
             if keyword in projHead:
                 header[keyword] = projHead[keyword]
@@ -758,9 +891,32 @@ class astroImage(object):
                 except:
                     pass
         
-        # save new header
-        self.header = header
+        # create reprojected image hdu
+        repoHdu = pyfits.PrimaryHDU(resampleMap, header)
+        repoHdulist = pyfits.HDUList([repoHdu])
+        
+        # create combine astro image
+        repoImage = astroImage(repoHdulist, load=False, instrument=self.instrument, band=self.band)
+          
+        
+        # see if need to correct image to conserve flux rather than surface brightness and correct
+        if conserveFlux or self.unit=="Jy/pix" or self.unit=="mJy/pix":
+            # get original pixel size
+            if hasattr(self, "pixSize") is False:
+                self.getPixelScale()
+            origPixSize = self.pixSize
             
+            # get output pixel size
+            repoImage.getPixelScale()
+            outPixSize = repoImage.pixSize
+
+            # adjust image for difference in pixel area
+            repoImage.image = repoImage.image * (outPixSize**2.0/origPixSize**2.0).to(u.dimensionless_unscaled).value
+            
+        # return new image
+        return repoImage
+    
+        
     def imageManipulation(self, operation, value):
         # function to manipulate fits file
         
@@ -783,25 +939,36 @@ class astroImage(object):
             raise ValueError("Operation not programmed")
     
     
-    def convolve(self, kernel, boundary='extend', fill_value=0.0):
+    def convolve(self, kernel, boundary='fill', fill_value=0.0, peakNorm=False, FWHM=True):
         
-        # see if kernel is a number or an array
-        if isinstance(kernel,type(float())):
-            kernelImage = Gaussian2DKernel(x_stddev = kernel)
-            kernelImage = kernelImage.array
-        else:
+        # see if 2D kernel is a number or an array
+        if isinstance(kernel, type(1.0*u.arcsecond)) is False:
             kernelImage = kernel
+        else:
+            if FWHM:
+                stddev = (kernel / (self.pixSize * 2.0*np.sqrt(2.0*np.log(2.0)))).to(u.dimensionless_unscaled).value
+            else:
+                stddev = (kernel / self.pixSize).to(u.dimensionless_unscaled).value
             
+            kernelImage = Gaussian2DKernel(x_stddev = stddev)
+            kernelImage = kernelImage.array
+        
         # renormalise so peak is one
         kernelImage = kernelImage / kernelImage.max()
         
         # find positions that are NaNs
         NaNsel = np.where(np.isnan(self.image) == True)
         
-        if boundary == 'fill':
-            convolvedArray = APconvolve_fft(self.image, kernelImage, boundary=boundary, fill_value=fill_value, allow_huge=True)
+        # set if have to normalise kernel
+        if peakNorm:
+            normKernel = False
         else:
-            convolvedArray = APconvolve_fft(self.image, kernelImage, boundary=boundary, allow_huge=True)
+            normKernel = True
+        
+        if boundary == 'fill':
+            convolvedArray = APconvolve_fft(self.image, kernelImage, boundary=boundary, fill_value=fill_value, allow_huge=True, normalize_kernel=normKernel)
+        else:
+            convolvedArray = APconvolve_fft(self.image, kernelImage, boundary=boundary, allow_huge=True, normalize_kernel=normKernel)
         
         # restore NaNs
         convolvedArray[NaNsel] = np.nan
@@ -852,11 +1019,11 @@ class astroImage(object):
         
         d = np.sqrt(x*x+y*y)
         d = np.transpose(d)
-        d *= self.pixSize
+        d *= self.pixSize.to(u.arcsecond).value
         
         # Calculate the frequencies in the Fourier plane to create a filter
-        x_f,y_f = np.meshgrid(np.fft.fftfreq(hires.shape[0],self.pixSize),
-                              np.fft.fftfreq(hires.shape[1],self.pixSize))
+        x_f,y_f = np.meshgrid(np.fft.fftfreq(hires.shape[0],self.pixSize.to(u.arcsecond).value),
+                              np.fft.fftfreq(hires.shape[1],self.pixSize.to(u.arcsecond).value))
         #d_f = np.sqrt(x_f**2 + y_f**2) *2.0#Factor of 2 due to Nyquist sampling
         d_f = np.sqrt(x_f**2 + y_f**2)
         d_f = np.transpose(d_f)
@@ -960,6 +1127,71 @@ class astroImage(object):
         
         return combineImage
     
+    
+    def quicklookPlot(self, recentre=None, stretch='linear', vmin=None, vmid=None, vmax=None, cmap=None, facecolour='white', nancolour='black', hide_colourbar=False, save=None):
+        # function to make a quick plot of the data using matplotlib and aplpy
+        
+        # create figure
+        fig = plt.figure()
+        
+        # repackage into an HDU 
+        hdu = pyfits.PrimaryHDU(self.image, self.header)
+        
+        # create aplpy axes
+        f1 = aplpy.FITSFigure(hdu, figure=fig)
+        
+        # if doing a log stretch find vmax, vmid, vmin
+        if stretch == "log":
+            if vmin is None or vmax is None or vmid is None:
+                # select non-NaN pixels
+                nonNAN = np.where(np.isnan(self.image) == False)
+                
+                # sort pixels
+                sortedPix = self.image[nonNAN]
+                sortedPix.sort()
+                
+                # set constants
+                minFactor = 1.0
+                brightPixCut = 5
+                brightClip = 0.9
+                midScale = 301.0
+                
+                if vmin is None:
+                    numValues = np.round(len(sortedPix) * 0.95).astype(int)
+                    vmin = -1.0 * sortedPix[:-numValues].std() * minFactor
+                
+                if vmax is None:
+                    vmax = sortedPix[-brightPixCut] * brightClip
+                
+                if vmid is None:
+                    vmid=(midScale * vmin - vmax)/100.0
+        
+        
+        # apply colourscale
+        f1.show_colorscale(stretch=stretch, cmap=cmap, vmin=vmin, vmax=vmax, vmid=vmid)
+        
+        # set nan colour to black, and face
+        f1.set_nan_color(nancolour)
+        f1.ax.set_facecolor(facecolour)
+        
+        # recentre image
+        if recentre is not None:
+            f1.recenter(recentre['RA'].to(u.degree).value, recentre['DEC'].to(u.degree).value, recentre['rad'].to(u.degree).value)
+        
+        # add colorbar
+        if hide_colourbar is False:
+            f1.add_colorbar()
+            f1.colorbar.show()
+            if hasattr(self, 'unit'):
+                f1.colorbar.set_axis_label_text(self.unit)
+        
+        # save plot if desired
+        if save is not None:
+            plt.savefig(save)
+        
+        plt.show()
+    
+    
     def saveToFits(self, outPath, overwrite=False):
         # function to save to fits
         
@@ -967,6 +1199,8 @@ class astroImage(object):
         fitsHduList = pyfits.HDUList([fitsHdu])
         
         fitsHduList.writeto(outPath, overwrite=overwrite)
+
+    
 
 # PPMAP cube class
 class ppmapCube(object):
@@ -1062,7 +1296,7 @@ class ppmapCube(object):
         pixSizes = wcs.utils.proj_plane_pixel_scales(WCSinfo)*3600.0
         if np.abs(pixSizes[0]-pixSizes[1]) > 0.0001:
             raise ValueError("PANIC - program does not cope with non-square pixels")
-        self.pixSize = round(pixSizes[0], 6)
+        self.pixSize = round(pixSizes[0], 6) * u.arcsecond
         return round(pixSizes[0], 6)
     
     # define method to mask cube to total column density above S/N threshold
@@ -1120,7 +1354,7 @@ class ppmapCube(object):
             ccVals = np.ones((self.nBeta, self.nTemperature))
         
         # change to mass per pixel
-        massCube = self.cube * (self.distance * np.tan(self.pixSize*u.arcsecond))**2.0
+        massCube = self.cube * (self.distance * np.tan(self.pixSize))**2.0
         
         # create emission map
         emission = np.zeros((massCube.shape[-2], massCube.shape[-1]))
@@ -1159,7 +1393,7 @@ class ppmapCube(object):
         emission[maskSel] = np.nan
         
         # convert emission map to Jy per arcsec^2
-        emission = emission.to(u.Jy) / (self.pixSize*u.arcsecond)**2.0
+        emission = emission.to(u.Jy) / (self.pixSize)**2.0
         
         # make new 2D header
         outHeader = self.header.copy()
