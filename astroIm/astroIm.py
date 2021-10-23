@@ -17,7 +17,7 @@ from reproject import reproject_from_healpix, reproject_interp, reproject_exact
 from photutils import make_source_mask
 from astropy.convolution import convolve_fft as APconvolve_fft
 from astropy.convolution import Gaussian2DKernel
-from astropy.modeling.blackbody import blackbody_nu
+from astropy.modeling.models import BlackBody as blackbody_nu
 import astropy.constants as con
 import os
 import glob
@@ -588,8 +588,9 @@ class astroImage(object):
         # see if the case of using a constant correction across entire image
         elif adjustSettings["temperature"] is not None and isinstance(adjustSettings["temperature"],str) is False and adjustSettings["beta"] is not None and isinstance(adjustSettings["beta"],str) is False:
             # if constant just compare what a blackbody would be before and after
-            newLevel = (con.c/(newWavelength*u.um))**adjustSettings["beta"] * blackbody_nu(newWavelength*u.um, adjustSettings["temperature"]*u.K)
-            currLevel = (con.c/(currentWavelength*u.um))**adjustSettings["beta"] * blackbody_nu(currentWavelength*u.um, adjustSettings["temperature"]*u.K)
+            blackbody = blackbody_nu(temperature=adjustSettings["temperature"]*u.K)
+            newLevel = (con.c/(newWavelength*u.um))**adjustSettings["beta"] * blackbody(newWavelength*u.um)
+            currLevel = (con.c/(currentWavelength*u.um))**adjustSettings["beta"] * blackbody(currentWavelength*u.um)
             factor = (newLevel / currLevel).value
             mapMethod = False
         else:
@@ -1382,7 +1383,8 @@ class ppmapCube(object):
                 slice[nanSel] = 0.0
                 
                 # add slice to total emission
-                emission = emission + slice * tau * (frequency / refFrequency)**self.betas[i] *  blackbody_nu(frequency, self.temperatures[j]) / self.distance**2.0 * u.sr
+                blackbody = blackbody_nu(temperature=self.temperatures[j])
+                emission = emission + slice * tau * (frequency / refFrequency)**self.betas[i] *  blackbody(frequency) / self.distance**2.0 * u.sr
         
                 # add if non-nan value to adjust mask
                 mask[nonNaNSel] = 1
