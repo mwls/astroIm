@@ -12,7 +12,7 @@ setup(
   keywords = ['Astronomy', 'Image', 'Analysis'],   # Keywords that define your package best
   install_requires=[            # I get to this in a second
           'numpy>1.19.0',
-          'astropy>4.0',
+          'astropy>4.3',
           'reproject>0.7.0',
           'photutils>1.0.0',
           'scipy>1.2.0',
