@@ -38,7 +38,7 @@ import matplotlib.pyplot as plt
 class astroImage(object):
     
     
-    def __init__(self, filename, ext=0, instrument=None, band=None, unit=None, load=True, FWHM=None, dustpediaHeaderCorrect=False):
+    def __init__(self, filename, ext=0, instrument=None, band=None, unit=None, load=True, FWHM=None, slices=None, dustpediaHeaderCorrect=False):
         if load:
             # load fits file
             fits = pyfits.open(filename)
@@ -48,6 +48,90 @@ class astroImage(object):
             fits = filename
             self.image = fits[ext].data
             self.header = fits[ext].header
+        
+        # see if more than two dimensions are prsent
+        if self.image.ndim > 2:
+            
+            # check if only two axes have more than size = 1
+            if len((np.where(np.array(self.image.shape) > 1))[0]) > 2:
+                # if slices is not defined raise an exception
+                if slices is None:
+                    raise Exception("To use astroImage class must indicate what slices to use for data with more than 2D data")
+                
+                # see what oder slices is given in, and if using zero index
+                if "fitsAxisOrder" in slices:
+                    fitsOrder = slices["fitsAxisOrder"]
+                else:
+                    fitsOrder = True
+                if "zeroIndex" in slices:
+                    if slices['zeroIndex']:
+                        zeroIndex = 0
+                    else:
+                        zeroIndex = 1
+                else:
+                    if fitsOrder:
+                        zeroIndex = 1
+                    else:
+                        zeroIndex = 0
+                
+                # create dictionary to store what slices to make - initiate with no restrictions
+                imgSlices = [slice(None)*self.image.ndim]
+                                
+                # adjust for restrictions from slices
+                for key in slices:
+                    if key == "fitsAxisOrder" or key == "zeroIndex":
+                        continue
+                    if fitsOrder:
+                        imgSlices[self.image.ndim-key+zeroIndex-1] = slice(slices[key] - zeroIndex, slices[key] - zeroIndex+1)
+                    else:
+                        imgSlices[key-zeroIndex] = slice(slices[key] - zeroIndex, slices[key] - zeroIndex+1)
+                
+                # now perform slices to the array
+                self.image = self.image[imgSlices]
+                
+                # check only two axis with more than 1 dimension now
+                if len((np.where(np.array(self.image.shape) > 1))[0]) > 2:
+                    raise Exception("Slices not specified to only give 2D image")
+            
+                
+            # create new WCS from array
+            imgWCS = pywcs.WCS(self.header, naxis=np.where(np.array(fits[0].data.shape) > 1)[0].tolist())
+            
+            # remove all WCS keywords from header
+            self.deleteWCSheaders()
+            
+            # update NAXIS keywords
+            axisN = 0
+            for i in range(1,self.header['NAXIS']+1):
+                if self.header['NAXIS'+str(i)] == "1":
+                    continue
+                else:
+                    self.header['NAXIS'+str(axisN)] = self.header['NAXIS'+str(i)]
+                    axisN += 1
+            # delete any remaining extra NAXIS headers
+            for i in range(3,self.header['NAXIS']+1):
+                try:
+                    del(self.header['NAXIS'+str(i)])
+                except:
+                    pass
+            # update NAXIS and i_naxis keyword
+            self.header['NAXIS'] = 2
+            self.header['i_naxis'] = 2
+            
+            # add new keywords to header
+            self.header.update(imgWCS.to_header())
+                            
+            # remove extra axis from array
+            self.image = np.squeeze(self.image)
+                
+            
+        elif self.image.ndim < 2:
+            if 'PIXTYPE' in self.header and self.header['PIXTYPE'] == 'HEALPIX':
+                pass
+            else:
+                raise Exception("Less than 2 spatial axis discovered")
+        
+        
         
         # correct dustpedia header 
         if dustpediaHeaderCorrect:
@@ -126,17 +210,17 @@ class astroImage(object):
             self.band = str(int(self.band))
     
         # if SCUBA-2, see if standard SCUBA2 image with 3 dimensions, and remove it and extra headings
-        if self.instrument == "SCUBA-2" and len(self.image.shape) == 3:
-            self.image = self.image[0,:,:]
-            self.header['NAXIS'] = 2
-            self.header['i_naxis'] = 2
-            
-            extraHeaders = ['NAXIS3', 'LBOUND3', 'CRPIX3', 'CRVAL3', 'CTYPE3', 'CDELT3', 'CUNIT3']
-            for extHeader in extraHeaders:
-                try:
-                    del self.header[extHeader]
-                except:
-                    pass
+        #if self.instrument == "SCUBA-2" and len(self.image.shape) == 3:
+        #    self.image = self.image[0,:,:]
+        #    self.header['NAXIS'] = 2
+        #    self.header['i_naxis'] = 2
+        #    
+        #    extraHeaders = ['NAXIS3', 'LBOUND3', 'CRPIX3', 'CRVAL3', 'CTYPE3', 'CDELT3', 'CUNIT3']
+        #    for extHeader in extraHeaders:
+        #        try:
+        #            del self.header[extHeader]
+        #        except:
+        #            pass
        
         # see if bunit in header, if planck add it
         if "BUNIT" not in self.header:
@@ -173,6 +257,44 @@ class astroImage(object):
         # close fits file
         if load:    
             fits.close()
+    
+    
+    def deleteWCSheaders(self):
+        # function to remove headers involved in providing the WCS, so can update keywords with new header from WCS.to_header
+        
+        # all headers with axis number after
+        headsToAdjust = ['CRPIX', 'CDELT', 'CRVAL', 'CTYPE', 'LBOUND', 'CUNIT']
+        
+        # loop over all header and axis number and delete if present
+        for i in range(1,self.header['NAXIS']+1):
+            for keyword in headsToAdjust:
+                try:
+                    del(self.header[keyword])
+                except:
+                    pass
+        
+        # also remove and CDX_Y or PCX_Y
+        for code in ["CD", "PC"]:
+            # see if present in header
+            if code+"1_1" in self.header or code+"01_01" in self.header or code+"001_001" in self.header:
+                # get number format
+                if code+"1_1" in self.header:
+                    numOrder = "01"
+                elif code+"1_1" in self.header:
+                    numOrder = "02"
+                else:
+                    numOrder = "03"
+                    
+                # loop over entire matrix
+                for i in range(1,self.header['NAXIS']+1):
+                    for j in range(1,self.header['NAXIS']+1):
+                        try:
+                            del(self.header[f"{code}{i:{numOrder}}"])
+                        except:
+                            pass
+        
+        return
+        
     
     def getPixelScale(self):
         # function to get pixel size
