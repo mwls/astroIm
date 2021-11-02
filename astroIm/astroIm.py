@@ -38,7 +38,7 @@ import matplotlib.pyplot as plt
 class astroImage(object):
     
     
-    def __init__(self, filename, ext=0, instrument=None, band=None, unit=None, load=True, FWHM=None, slices=None, dustpediaHeaderCorrect=False):
+    def __init__(self, filename, ext=0, telescope=None, instrument=None, band=None, unit=None, load=True, FWHM=None, slices=None, dustpediaHeaderCorrect=False):
         if load:
             # load fits file
             fits = pyfits.open(filename)
@@ -75,7 +75,7 @@ class astroImage(object):
                         zeroIndex = 0
                 
                 # create dictionary to store what slices to make - initiate with no restrictions
-                imgSlices = [slice(None)*self.image.ndim]
+                imgSlices = [slice(None)]*self.image.ndim
                                 
                 # adjust for restrictions from slices
                 for key in slices:
@@ -95,13 +95,15 @@ class astroImage(object):
             
                 
             # create new WCS from array
-            imgWCS = pywcs.WCS(self.header, naxis=np.where(np.array(fits[0].data.shape) > 1)[0].tolist())
+            origHeader = self.header.copy()
+            naxisSel = (self.image.ndim - np.where(np.array(self.image.shape) > 1)[0])[::-1].tolist()
+            imgWCS = pywcs.WCS(self.header, naxis=naxisSel)
             
             # remove all WCS keywords from header
             self.deleteWCSheaders()
             
             # update NAXIS keywords
-            axisN = 0
+            axisN = 1
             for i in range(1,self.header['NAXIS']+1):
                 if self.header['NAXIS'+str(i)] == "1":
                     continue
@@ -145,6 +147,20 @@ class astroImage(object):
                     else:
                         self.header[keyword] = (info[0], info[1])    
 
+        # identify telescope
+        if telescope is None:
+            if 'TELESCOP' in self.header:
+                self.telescope = self.header['TELESCOP']
+            elif ext > 0:
+                primeHeader = fits[0].header
+                if 'TELESCOP' in primeHeader:
+                    self.telescope = primeHeader['TELESCOP']
+                else:
+                    self.telescope = None
+            else:
+                self.telescope = None
+        else:
+            self.telescope = telescope
         
         # identify instrument
         if instrument is None:
@@ -160,9 +176,11 @@ class astroImage(object):
                     else:
                         self.instrument = primeHeader['INSTRMNT']
                 except:
-                    raise ValueError("Unable to find instrument, please specify")
+                    print("Warning - Unable to find instrument, recommended to specify")
+                    self.instrument = None
             else:
-                raise ValueError("Unable to find instrument, please specify: ", filename)
+                print("Warning - Unable to find instrument, recommended to specify")
+                self.instrument = None
         else:
             self.instrument = instrument
         
@@ -188,9 +206,30 @@ class astroImage(object):
                     else:
                         self.band = primeHeader['FREQ']
                 except:
-                    raise ValueError("Band not indentified please specify")
+                    print("Warning - Band not identified, recommended to specify")
+                    self.band = None
+            elif self.telescope == "ALMA":
+                almaBands = {"Band1":[31.0,45.0], "Band2":[67.0,90.0], "Band3":[84.0,116.0], "Band4":[125.0,163.0],\
+                             "Band5":[163.0,211.0], "Band6":[211.0,275.0], "Band7":[275.0,373.0], "Band8":[385.0,500.0],\
+                             "Band9":[602.0,720.0], "Band10":[787.0,950.0]}
+                try:
+                    bandFound = False
+                    if origHeader["CTYPE3"] == "FREQ":
+                        freqGHz = origHeader['CRVAL3'] / 1.0e9
+                        for almaBand in almaBands:
+                            if freqGHz >= almaBands[almaBand][0] and freqGHz <= almaBands[almaBand][1]:
+                                self.band = almaBand
+                                bandFound = True
+                                break
+                except:
+                    bandFound = False
+                    
+                if bandFound is False:
+                   print("Warning - Band not identified, recommended to specify")
+                   self.band = None      
             else:
-                raise ValueError("Band not indentified please specify")
+                print("Warning - Band not identified, recommended to specify")
+                self.band = None
         else:
             self.band = band
         
@@ -242,17 +281,35 @@ class astroImage(object):
         else:
             self.unit = None
         
+        # try and get the wavelength of the observation
         try:
             self.wavelength = self.standardCentralWavelengths(self.instrument, self.band)
         except:
             pass
         
-        # if information provided add in FWHM information
+        
+        # see if beam information is provided in header
+        if "BMAJ" in self.header and "BMIN" in self.header:
+            # extract 
+            if "BPA" in self.header:
+                self.beam  = {"BMAJ": (self.header['BMAJ'] * u.degree).to(u.arcsecond),\
+                              "BMIN": (self.header['BMIN'] * u.degree).to(u.arcsecond),\
+                              "BPA": self.header['BPA'] * u.degree}
+            else:
+                if FWHM is None:
+                    FWHM = (self.header['BMAJ'] + self.header['BMIN'])/2.0 * u.degree
+        
+        # see if can get FWHM
         if FWHM is not None:
             try:
                 self.fwhm = FWHM.to(u.arcsecond)
             except:
                 self.fwhm = FWHM * u.arcsecond
+        else:
+            try:
+                self.fwhm = self.standardFWHM(self.instrument, self.band)
+            except:
+                pass
         
         # close fits file
         if load:    
@@ -269,7 +326,7 @@ class astroImage(object):
         for i in range(1,self.header['NAXIS']+1):
             for keyword in headsToAdjust:
                 try:
-                    del(self.header[keyword])
+                    del(self.header[keyword+str(i)])
                 except:
                     pass
         
