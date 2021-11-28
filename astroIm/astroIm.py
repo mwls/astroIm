@@ -2551,7 +2551,7 @@ def loadColourCorrect(colFile, SPIREtype):
         else:
             raise "Instrument/band not programmed for cc load"
 
-    test=2
+    
     # return colour correction information
     return newCCinfo
     
