@@ -2554,4 +2554,4 @@ def loadColourCorrect(colFile, SPIREtype):
     
     # return colour correction information
     return newCCinfo
-            
+    
