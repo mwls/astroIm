@@ -1670,8 +1670,8 @@ class astroImage(object):
             
             
             # create artficial ppmap image at both new and old wavelength
-            predictedNewWave = ppMap.artificialImage(newWavelength*u.um, adjustSettings["tau"], adjustSettings["tauWavelength"])
-            predictedCurrWave = ppMap.artificialImage(self.wavelength*u.um, adjustSettings["tau"], adjustSettings["tauWavelength"])
+            predictedNewWave = ppMap.artificialImage(newWavelength, adjustSettings["tau"], adjustSettings["tauWavelength"])
+            predictedCurrWave = ppMap.artificialImage(self.wavelength, adjustSettings["tau"], adjustSettings["tauWavelength"])
             
             # set variable that using a map based (rather than a constant across whole image
             mapMethod = True
@@ -1844,8 +1844,8 @@ class astroImage(object):
                     ccPPMAPvals[i,j] = ccValueFind(ppMap.temperatures[j].to(u.K).value, ppMap.betas[i], ccValues)
             
             # create artficial ppmap image both with and without colour corrections
-            predictedMapWithCC = ppMap.artificialImage(self.wavelength*u.um, adjustSettings["tau"], adjustSettings["tauWavelength"],ccVals=ccPPMAPvals)
-            predictedMapNoCC = ppMap.artificialImage(self.wavelength*u.um, adjustSettings["tau"], adjustSettings["tauWavelength"])
+            predictedMapWithCC = ppMap.artificialImage(self.wavelength, adjustSettings["tau"], adjustSettings["tauWavelength"],ccVals=ccPPMAPvals)
+            predictedMapNoCC = ppMap.artificialImage(self.wavelength, adjustSettings["tau"], adjustSettings["tauWavelength"])
             
                         
             # set variable that using a map based (rather than a constant across whole image
@@ -2165,7 +2165,7 @@ class astroImage(object):
         print('Fourier transforms complete')
         
         # Calculate the volume ratio (high to low res)
-        ratio = beamAreas[self.instrument][self.band] / beamAreas[lowresImage.instrument][lowresImage.band]
+        ratio = (beamAreas[self.instrument][self.band] / beamAreas[lowresImage.instrument][lowresImage.band]).to(u.dimensionless_unscaled).value
         lowres_fourier *= ratio
         
         # Weight image the based on the filter
