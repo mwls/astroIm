@@ -366,7 +366,7 @@ class astroImage(object):
         return round(pixSizes[0], 6)
     
         
-    def background_rms(self, snr=2, npixels=5, dilate_size=11, sigClip=3.0, iterations=20, maskMatch=None):
+    def background_sigmaClip(self, snr=2, npixels=5, dilate_size=11, sigClip=3.0, iterations=20, maskMatch=None, apply=False):
         # function to get background level and noise
         if maskMatch is None:
             mask = make_source_mask(self.image, nsigma=snr, npixels=npixels, dilate_size=dilate_size)
@@ -376,7 +376,11 @@ class astroImage(object):
         self.bkgMedian = median
         self.bkgStd = std
         
-        return median, std, mask
+        if apply:
+            self.image = self.image - self.bkgMedian
+            self.bkgMedian = 0.0
+        
+        return mask
     
     
     def constantBackSub(self, backConstant):
@@ -388,7 +392,7 @@ class astroImage(object):
         return
     
     
-    def ellipseAnnulusBackSub(self, backInfo, backNoise=False):
+    def ellipseAnnulusBackSub(self, backInfo, backNoise=False, apply=False):
         # function to select pixels within an elliptical aperture
         
         # extract background annulus parameters
@@ -419,14 +423,17 @@ class astroImage(object):
                             (np.isnan(self.image) == False))
         
         # calculate the mean of the pixels and subtract from the image
-        self.image = self.image - self.image[pixelSel].mean()
+        backValue = self.image[pixelSel].mean()
+        
+        if apply:
+            self.image = self.image - self.image[pixelSel].mean()
         
         # if back noise is set, find standard deviation and return value
         if backNoise:
             noise = self.image[pixelSel].std() 
-            return noise
+            return backValue, noise
         else:
-            return
+            return backValue
         
     
     def circularAperture(self, galInfo, radius=None, multiRadius = False, localBackSubtract=None, names=None, method='exact', subpixels=None, backMedian=False, maskNaN = True, error=None):
@@ -820,6 +827,7 @@ class astroImage(object):
         # import required modules
         from photutils import aperture_photometry
         from astropy.table import Column
+        from astropy.table import join as tableJoin
         if multiRadius:
             from astropy.table import Table
         
@@ -1223,9 +1231,13 @@ class astroImage(object):
                     phot_table = ind_phot_table.copy()
                     nPixTable = ind_nPixTable.copy()
                 else:
+                    #print(ind_phot_table)
+                    #print(ind_phot_table[-1])
                     ind_phot_table['id'][0] = i+1
                     phot_table.add_row(ind_phot_table[-1])
                     nPixTable.add_row(ind_nPixTable[-1])
+                    #phot_table = tableJoin(phot_table, ind_phot_table)
+                    #nPixTable = tableJoin(phot_table, ind_nPixTable)
         
         # now process the table to the correct format
         if multiRadius:
