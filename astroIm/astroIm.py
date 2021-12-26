@@ -199,19 +199,17 @@ class astroImage(object):
             elif 'FREQ' in self.header:
                 self.band = self.header['FREQ']
             elif ext != 0:
-                try:
-                    primeHeader = fits[0].header
-                    if 'FILTER' in primeHeader:
-                        self.band = primeHeader['FILTER']
-                    elif 'WAVELNTH' in primeHeader:
-                        self.band = primeHeader['WAVELNTH']
-                    elif 'WVLNGTH' in primeHeader:
-                        self.band = primeHeader['WVLNGTH']
-                    else:
-                        self.band = primeHeader['FREQ']
-                except:
-                    if verbose:
-                        print("Warning - Band not identified, recommended to specify")
+                bandFound = False
+                primeHeader = fits[0].header
+                for bandHeader in ['FILTER', 'WAVELNTH', 'WVLNGTH' 'FREQ']:
+                    if bandHeader in primeHeader:
+                        self.band = primeHeader[bandHeader]
+                        self.header[bandHeader] = primeHeader[bandHeader]
+                        bandFound = True
+                        break
+                
+                if bandFound is False:
+                    print("Warning - Band not identified, recommended to specify")
                     self.band = None
             elif self.telescope == "ALMA":
                 almaBands = {"Band1":[31.0,45.0], "Band2":[67.0,90.0], "Band3":[84.0,116.0], "Band4":[125.0,163.0],\
@@ -1607,9 +1605,11 @@ class astroImage(object):
                 self.header['BUNIT'] = newUnit
                 self.unit = newUnit
                 if "SIGUNIT" in self.header:
-                        self.header['SIGUNIT'] = newUnit
+                    self.header['SIGUNIT'] = newUnit
                 if "ZUNITS" in self.header:
-                        self.header['ZUNITS'] = newUnit
+                    self.header['ZUNITS'] = newUnit
+                if "QTTY____" in self.header:
+                    self.header['QTTY____'] = newUnit
                 if verbose:
                     print("Image converted to: ", newUnit)
     
