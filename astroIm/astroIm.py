@@ -814,7 +814,7 @@ class astroImage(object):
         # check either minor defined
         if minor is None:
             raise ValueError("Semi-minor axis must be defined")
-    
+        
         # perform aperture photometry
         phot_table = self.aperturePhotometry(mode, centres, major, minor=minor, PA=PA, multiRadius=multiRadius, localBackSubtract=localBackSubtract, names=names, method=method, subpixels=subpixels, backMedian=backMedian, maskNaN=maskNaN, error=error)
     
@@ -978,8 +978,9 @@ class astroImage(object):
                 if localBackSubtract is not None:
                     if isinstance(localBackSubtract, (list,tuple,np.ndarray)):
                         backRadInfo = localBackSubtract[i]
-                        if mode == "ellipse" and "outerCircle" not in backRadInfo:
-                            backRadInfo["outcerCircle"] = False
+                        if backRadInfo is not None:
+                            if mode == "ellipse" and "outerCircle" not in backRadInfo:
+                                backRadInfo["outcerCircle"] = False
                     elif isinstance(localBackSubtract['inner'],u.Quantity) is False and isinstance(localBackSubtract['inner'], (list,tuple, np.ndarray)):
                         backRadInfo = {"inner":localBackSubtract['inner'][i], "outer":localBackSubtract['outer'][i]}
                         if mode == "ellipse":
@@ -1013,7 +1014,7 @@ class astroImage(object):
                     
                     
                     # see if background radius is in pixel or angular units
-                    if localBackSubtract is not None:
+                    if localBackSubtract is not None and backRadInfo is not None:
                         # see if back inner radius is in pixels or angular units
                         if isinstance(backRadInfo["inner"], u.Quantity) is False:
                             # convert to angular size by multiplying by pixel size
@@ -1042,15 +1043,18 @@ class astroImage(object):
                     
                     # if doing local subtraction create background aperture
                     if localBackSubtract is not None:
-                        if mode == "circle":
-                            backApertures.append(SkyCircularAnnulus(centres[i], r_in=backRadInfo["inner"], r_out=backRadInfo["outer"]))
-                        elif mode == "ellipse":
-                            if backRadInfo["outerCircle"]:
-                                backApertures.append(SkyEllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"], b_in=backRadInfo["inner"]*minorRad/rad, theta=apPA))
-                            else:
-                                backApertures.append(SkyEllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*minorRad/rad, theta=apPA))
-                        elif mode == "rectangle":
-                            backApertures.append(SkyRectangularAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*minorRad/rad, theta=apPA))
+                        if backRadInfo is not None:
+                            if mode == "circle":
+                                backApertures.append(SkyCircularAnnulus(centres[i], r_in=backRadInfo["inner"], r_out=backRadInfo["outer"]))
+                            elif mode == "ellipse":
+                                if backRadInfo["outerCircle"]:
+                                    backApertures.append(SkyEllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"], b_in=backRadInfo["inner"]*minorRad/rad, theta=apPA))
+                                else:
+                                    backApertures.append(SkyEllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*minorRad/rad, theta=apPA))
+                            elif mode == "rectangle":
+                                backApertures.append(SkyRectangularAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*minorRad/rad, theta=apPA))
+                        else:
+                            backApertures.append(None)
                 else:
                     # see if radius is in pixels or angular units
                     if isinstance(rad, u.Quantity):
@@ -1071,7 +1075,7 @@ class astroImage(object):
                             
                     
                     # see if background radius is in pixel or angular units
-                    if localBackSubtract is not None:
+                    if localBackSubtract is not None and backRadInfo is not None:
                         # see if back inner radius is in pixels or angular units
                         if isinstance(backRadInfo["inner"], u.Quantity) is False:
                             # see if have the pixel size loaded
@@ -1145,30 +1149,31 @@ class astroImage(object):
             ind_phot_table = aperture_photometry(self.image, apertures[i], wcs=imgWCS, method=method, subpixels=subpixels, mask=nanMask)
             ind_nPixTable = aperture_photometry(np.ones(self.image.shape), apertures[i], wcs=imgWCS, method=method, subpixels=subpixels, mask=nanMask)
                                    
-              
+            print(localBackSubtract)
             # perform backgound subtraction if requested
-            if localBackSubtract:
-                # calculate either median or mean
-                if backMedian:
-                    if pixOnly:
-                        backMask = backApertures[i].to_mask('center').multiply(np.ones(self.image.shape))
-                        backImage = backApertures[i].to_mask('center').multiply(self.image)
+            if localBackSubtract is not None:
+                if isinstance(localBackSubtract, (list,tuple,np.ndarray)) is False or localBackSubtract[i] is not None:
+                    # calculate either median or mean
+                    if backMedian:
+                        if pixOnly:
+                            backMask = backApertures[i].to_mask('center').multiply(np.ones(self.image.shape))
+                            backImage = backApertures[i].to_mask('center').multiply(self.image)
+                        else:
+                            backMask = backApertures[i].to_pixel(imgWCS).to_mask('center').multiply(np.ones(self.image.shape))
+                            backImage = backApertures[i].to_pixel(imgWCS).to_mask('center').multiply(self.image)
+                        if maskNaN:
+                            backValues = np.nanmedian(backImage[backMask > 0])
+                        else:
+                            backValues = np.median(backImage[backMask > 0])
+                        backNpix = len(backImage[backMask > 0])
+                        ind_phot_table['aperture_sum'] = ind_phot_table['aperture_sum'] - backValues * ind_nPixTable['aperture_sum']
                     else:
-                        backMask = backApertures[i].to_pixel(imgWCS).to_mask('center').multiply(np.ones(self.image.shape))
-                        backImage = backApertures[i].to_pixel(imgWCS).to_mask('center').multiply(self.image)
-                    if maskNaN:
-                        backValues = np.nanmedian(backImage[backMask > 0])
-                    else:
-                        backValues = np.median(backImage[backMask > 0])
-                    backNpix = len(backImage[backMask > 0])
-                    ind_phot_table['aperture_sum'] = ind_phot_table['aperture_sum'] - backValues * ind_nPixTable['aperture_sum']
-                else:
-                    ind_back_table = aperture_photometry(self.image, backApertures[i], wcs=imgWCS, method=method, subpixels=subpixels, mask=nanMask)
-                    ind_back_nPixTable = aperture_photometry(np.ones(self.image.shape), backApertures[i], wcs=imgWCS, method=method, subpixels=subpixels, mask=nanMask)
-
-                    backValues = ind_back_table['aperture_sum'] / ind_back_nPixTable['aperture_sum']
-                    backNpix = ind_back_nPixTable['aperture_sum']
-                    ind_phot_table['aperture_sum'] = ind_phot_table['aperture_sum'] - backValues * ind_nPixTable['aperture_sum']
+                        ind_back_table = aperture_photometry(self.image, backApertures[i], wcs=imgWCS, method=method, subpixels=subpixels, mask=nanMask)
+                        ind_back_nPixTable = aperture_photometry(np.ones(self.image.shape), backApertures[i], wcs=imgWCS, method=method, subpixels=subpixels, mask=nanMask)
+    
+                        backValues = ind_back_table['aperture_sum'] / ind_back_nPixTable['aperture_sum']
+                        backNpix = ind_back_nPixTable['aperture_sum']
+                        ind_phot_table['aperture_sum'] = ind_phot_table['aperture_sum'] - backValues * ind_nPixTable['aperture_sum']
             
             # see if using error image
             if error is not None:
@@ -1193,16 +1198,17 @@ class astroImage(object):
                 
                 # if local background subtraction done include that contribution
                 if localBackSubtract:
-                    if errorImage is True:
-                        var_back_table = aperture_photometry(error**2.0, backApertures[i], wcs=imgWCS, method=method, subpixels=subpixels, mask=nanMask)
-                        backValError = np.sqrt(var_back_table['aperture_sum']) / backNpix
-                    else:
-                        backValError = noiseBack / backNpix
+                    if isinstance(localBackSubtract, (list,tuple,np.ndarray)) is False or localBackSubtract[i] is not None:
+                        if errorImage is True:
+                            var_back_table = aperture_photometry(error**2.0, backApertures[i], wcs=imgWCS, method=method, subpixels=subpixels, mask=nanMask)
+                            backValError = np.sqrt(var_back_table['aperture_sum']) / backNpix
+                        else:
+                            backValError = noiseBack / backNpix
+                        
+                        backError = backValError * ind_nPixTable['aperture_sum']
                     
-                    backError = backValError * ind_nPixTable['aperture_sum']
-                
-                    # combine background and aperture error    
-                    apError = np.sqrt(apError**2.0 + backError**2.0)
+                        # combine background and aperture error    
+                        apError = np.sqrt(apError**2.0 + backError**2.0)
                 
                 # save error result to table
                 ind_phot_table['aperture_error'] = apError
