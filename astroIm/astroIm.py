@@ -175,8 +175,10 @@ class astroImage(object):
                     primeHeader = fits[0].header
                     if 'INSTRUME' in primeHeader:
                         self.instrument = primeHeader['INSTRUME']
+                        self.header['INSTRUME'] = primeHeader['INSTRUME']
                     else:
                         self.instrument = primeHeader['INSTRMNT']
+                        self.header['INSTRMNT'] = primeHeader['INSTRMNT']
                 except:
                     if verbose:
                         print("Warning - Unable to find instrument, recommended to specify")
