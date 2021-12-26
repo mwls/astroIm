@@ -756,7 +756,7 @@ class astroImage(object):
         else:
             centres = galInfo
                     
-        # see what is defined minor/axisRatio and create uniform
+        # see what is defined width or length ratio and create uniform
         if minor is None and ratio is not None:
             if isinstance(major, (list,tuple)) and isinstance(ratio,(list,tuple)):
                 minor = []
@@ -828,8 +828,7 @@ class astroImage(object):
         from photutils import aperture_photometry
         from astropy.table import Column
         from astropy.table import join as tableJoin
-        if multiRadius:
-            from astropy.table import Table
+        from astropy.table import Table
         
         # check mode programmed
         if mode not in ["circle", "ellipse", "rectangle"]:
@@ -844,7 +843,7 @@ class astroImage(object):
                 from photutils import CircularAnnulus
         elif mode == "ellipse":
             from photutils import SkyEllipticalAperture
-            from photutils import EllipticalApperture
+            from photutils import EllipticalAperture
             if localBackSubtract:
                 from photutils import SkyEllipticalAnnulus
                 from photutils import EllipticalAnnulus
@@ -1228,16 +1227,28 @@ class astroImage(object):
             else:
                 # if first object create master table, otherwise append line.
                 if i == 0:
-                    phot_table = ind_phot_table.copy()
-                    nPixTable = ind_nPixTable.copy()
+                    phot_xcenter = [ind_phot_table['xcenter'][0].value]
+                    phot_ycenter = [ind_phot_table['ycenter'][0].value]
+                    if "sky_center" in ind_phot_table.colnames:
+                        phot_sky_center = [ind_phot_table['sky_center'][0]]
+                    phot_apsum = [ind_phot_table['aperture_sum'][0]]
+                    phot_npix = [ind_nPixTable['aperture_sum'][0]]
+                    if error is not None:
+                        phot_aperr = [ind_phot_table['aperture_error'][0]]
+                    #phot_table = ind_phot_table.copy()
+                    #nPixTable = ind_nPixTable.copy()
                 else:
-                    #print(ind_phot_table)
-                    #print(ind_phot_table[-1])
-                    ind_phot_table['id'][0] = i+1
-                    phot_table.add_row(ind_phot_table[-1])
-                    nPixTable.add_row(ind_nPixTable[-1])
-                    #phot_table = tableJoin(phot_table, ind_phot_table)
-                    #nPixTable = tableJoin(phot_table, ind_nPixTable)
+                    #ind_phot_table['id'][0] = i+1
+                    #phot_table.add_row(ind_phot_table[-1])
+                    #nPixTable.add_row(ind_nPixTable[-1])
+                    phot_xcenter.append(ind_phot_table['xcenter'][0].value)
+                    phot_ycenter.append(ind_phot_table['ycenter'][0].value)
+                    if "sky_center" in ind_phot_table.colnames:
+                        phot_sky_center.append(ind_phot_table['sky_center'][0])
+                    phot_apsum.append(ind_phot_table['aperture_sum'][0])
+                    phot_npix.append(ind_nPixTable['aperture_sum'][0]) 
+                    if error is not None:
+                        phot_aperr.append(ind_phot_table['aperture_error'][0])
         
         # now process the table to the correct format
         if multiRadius:
@@ -1284,20 +1295,23 @@ class astroImage(object):
                         if error is not None:
                             phot_table[sourceName+'_aperture_error'].unit = newUnit
         else:
-            phot_table['number_pixels'] = nPixTable['aperture_sum']
+            # create table
+            phot_table = Table()
             
-            # reorder columns
-            order = phot_table.colnames
-            neworder = order.copy()
+            # ad rows
+            phot_table['id'] = range(1,len(phot_xcenter)+1)
+            phot_table['xcenter'] = phot_xcenter
+            phot_table['ycenter'] = phot_ycenter
+            if "sky_center" in ind_phot_table.colnames:
+                phot_table['sky_center'] = phot_sky_center
+            phot_table['number_pixels'] = phot_npix
+            phot_table['aperture_sum'] = phot_apsum
             if error is not None:
-                neworder[-1] = order[-2]
-                neworder[-3] = order[-1]
-                neworder[-2] = order[-3]
-            else:
-                neworder[-1] = order[-2]
-                neworder[-2] = order[-1]
-            phot_table = phot_table[neworder]
+                phot_table['aperture_error'] = phot_aperr
                        
+            # add unit to xcenter and ycenter
+            phot_table['xcenter'].unit = u.pix
+            phot_table['ycenter'].unit = u.pix
                         
             # change to mean if in surface brightness units
             if calculateMean:    
@@ -1338,64 +1352,7 @@ class astroImage(object):
         
         
         return phot_table
-    
-    
-    def rectangularAperture(self, rectangleInfo):
-        # function to select pixels within rectangular aperture and sum
         
-        # find central pixel
-        wcs = pywcs.WCS(self.header)
-        pixCoord = wcs.wcs_world2pix([rectangleInfo['centreRA']], [rectangleInfo['centreDEC']],0)
-        
-        # calculate size of rectangle
-        if hasattr(self, 'pixSize') is False:
-            self.getPixelSize()
-        
-        xsize = rectangleInfo['size'][0] * 60.0 / self.pixSize.to(u.arcsecond).value
-        ysize = rectangleInfo['size'][1] * 60.0 / self.pixSize.to(u.arcsecond).value
-        
-        # calculate corners of box
-        x1 = int(np.round(pixCoord[0] - xsize / 2.0))
-        x2 = int(np.round(pixCoord[0] + xsize / 2.0))
-        y1 = int(np.round(pixCoord[1] - ysize / 2.0))
-        y2 = int(np.round(pixCoord[1] + ysize / 2.0))
-    
-        # check corner pixels
-        flag = False
-        if x1 < 0:
-            x1 = 0
-            flag = True
-        if x1 >= self.image.shape[1]:
-            x1 = self.image.shape[1] -1
-            flag = True
-        if x2 < 0:
-            x2 = 0
-            flag = True
-        if x2 >= self.image.shape[1]:
-            x2 = self.image.shape[1] -1
-            flag = True
-        if y1 < 0:
-            y1 = 0
-            flag = Truey
-        if y1 >= self.image.shape[0]:
-            y1 = self.image.shape[0] -1
-            flag = True
-        if y2 < 0:
-            y2 = 0
-            flag = True
-        if y2 >= self.image.shape[0]:
-            y2 = self.image.shape[0] -1
-            flag = True
-        
-        # get minimap
-        minimap = self.image[y1:y2+1, x1:x2+1]
-        
-        # select non-nans
-        sel = np.where(np.isnan(minimap) == False)
-        
-        return minimap[sel].sum(), len(sel[0])
-        
-    
     def coordMaps(self):
         # function to find ra and dec co-ordinates of every pixel
         
