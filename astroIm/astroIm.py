@@ -1149,7 +1149,6 @@ class astroImage(object):
             ind_phot_table = aperture_photometry(self.image, apertures[i], wcs=imgWCS, method=method, subpixels=subpixels, mask=nanMask)
             ind_nPixTable = aperture_photometry(np.ones(self.image.shape), apertures[i], wcs=imgWCS, method=method, subpixels=subpixels, mask=nanMask)
                                    
-            print(localBackSubtract)
             # perform backgound subtraction if requested
             if localBackSubtract is not None:
                 if isinstance(localBackSubtract, (list,tuple,np.ndarray)) is False or localBackSubtract[i] is not None:
