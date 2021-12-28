@@ -12,12 +12,6 @@ Date: 2018-02-28 (first development)
 import numpy as np
 from astropy import wcs
 from astropy.io import fits as pyfits
-from astropy.stats import sigma_clipped_stats
-from reproject import reproject_from_healpix, reproject_interp, reproject_exact
-from photutils import make_source_mask
-from photutils.aperture import CircularAperture
-from astropy.convolution import convolve_fft as APconvolve_fft
-from astropy.convolution import Gaussian2DKernel
 from astropy.modeling.models import BlackBody as blackbody_nu
 import astropy.constants as con
 import os
@@ -25,14 +19,9 @@ import glob
 import warnings
 warnings.filterwarnings("ignore")
 import astropy.units as u
-import astropy.wcs as pywcs
-from astropy.coordinates import SkyCoord
-from astropy.coordinates import ICRS
 from scipy import interpolate
 import copy
 import pickle
-import aplpy
-import matplotlib.pyplot as plt
 
 # define classes
 
@@ -99,7 +88,7 @@ class astroImage(object):
             # create new WCS from array
             origHeader = self.header.copy()
             naxisSel = (self.image.ndim - np.where(np.array(self.image.shape) > 1)[0])[::-1].tolist()
-            imgWCS = pywcs.WCS(self.header, naxis=naxisSel)
+            imgWCS = wcs.WCS(self.header, naxis=naxisSel)
             
             # remove all WCS keywords from header
             self.deleteWCSheaders()
@@ -368,6 +357,11 @@ class astroImage(object):
         
     def background_sigmaClip(self, snr=2, npixels=5, dilate_size=11, sigClip=3.0, iterations=20, maskMatch=None, apply=False):
         # function to get background level and noise
+        
+        # import modules
+        from astropy.stats import sigma_clipped_stats
+        from photutils import make_source_mask
+        
         if maskMatch is None:
             mask = make_source_mask(self.image, nsigma=snr, npixels=npixels, dilate_size=dilate_size)
         else:
@@ -829,6 +823,7 @@ class astroImage(object):
         from astropy.table import Column
         from astropy.table import join as tableJoin
         from astropy.table import Table
+        from astropy.coordinates import SkyCoord
         
         # check mode programmed
         if mode not in ["circle", "ellipse", "rectangle"]:
@@ -837,19 +832,19 @@ class astroImage(object):
         # import relevant photutil function
         if mode == "circle":
             from photutils import SkyCircularAperture
-            from photutils import CircularAperture
+            from photutils import CircularAperture as PixCircularAperture
             if localBackSubtract:
                 from photutils import SkyCircularAnnulus
                 from photutils import CircularAnnulus
         elif mode == "ellipse":
             from photutils import SkyEllipticalAperture
-            from photutils import EllipticalAperture
+            from photutils import EllipticalAperture as PixEllipticalAperture
             if localBackSubtract:
                 from photutils import SkyEllipticalAnnulus
                 from photutils import EllipticalAnnulus
         elif mode == "rectangle":
             from photutils import SkyRectangularAperture
-            from photutils import RectangularAperture
+            from photutils import RectangularAperture as PixRectangularAperture
             if localBackSubtract:
                 from photutils import SkyRectangularAnnulus
                 from photutils import RectangularAnnulus
@@ -897,7 +892,7 @@ class astroImage(object):
         
         # set flag whether needed to load WCS info
         try:
-            imgWCS = pywcs.WCS(self.header)
+            imgWCS = wcs.WCS(self.header)
             pixOnly = False
         except:
             imgWCS = None
@@ -1102,11 +1097,11 @@ class astroImage(object):
                     # create aperture object
                     if pixOnly:
                         if mode == "circle":
-                            apertures.append(CircularAperture(centres[i], r=rad))
+                            apertures.append(PixCircularAperture(centres[i], r=rad))
                         elif mode == "ellipse":
-                            apertures.append(EllipticalAperture(centres[i], rad, minorRad, theta=apPA.to(u.radian).value))
+                            apertures.append(PixEllipticalAperture(centres[i], rad, minorRad, theta=apPA.to(u.radian).value))
                         elif mode == "rectangle":
-                            apertures.append(RectangularAperture(centres[i], rad, minorRad, theta=apPA.to(u.radian).value))
+                            apertures.append(PixRectangularAperture(centres[i], rad, minorRad, theta=apPA.to(u.radian).value))
                             
                         if localBackSubtract:
                             if mode == "circle":
@@ -1120,11 +1115,11 @@ class astroImage(object):
                                 backApertures.append(RectangularAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*minorRad/rad, theta=apPA))
                     else:
                         if mode == "circle":
-                            apertures.append(CircularAperture(centres[i], r=rad).to_sky(imgWCS))
+                            apertures.append(PixCircularAperture(centres[i], r=rad).to_sky(imgWCS))
                         elif mode == "ellipse":
-                            apertures.append(EllipticalAperture(centres[i], rad, minorRad, theta=apPA.to(u.radian).value).to_sky(imgWCS))
+                            apertures.append(PixEllipticalAperture(centres[i], rad, minorRad, theta=apPA.to(u.radian).value).to_sky(imgWCS))
                         elif mode == "rectangle":
-                            apertures.append(RectangularAperture(centres[i], rad, minorRad, theta=apPA.to(u.radian).value).to_sky(imgWCS))
+                            apertures.append(PixRectangularAperture(centres[i], rad, minorRad, theta=apPA.to(u.radian).value).to_sky(imgWCS))
                             
                         if localBackSubtract:
                             if mode == "circle":
@@ -1357,13 +1352,17 @@ class astroImage(object):
         
         
         return phot_table
+    
         
     def coordMaps(self):
         # function to find ra and dec co-ordinates of every pixel
         
+        # import modules
+        from astropy.coordinates import ICRS
+        
         # Parse the WCS keywords in the primary HDU
         header = self.header
-        wcs = pywcs.WCS(self.header)
+        wcs = wcs.WCS(self.header)
         
         # Make input arrays for every pixel on the map
         xpix = np.zeros((header["NAXIS1"]*header["NAXIS2"]),dtype=int)
@@ -1924,7 +1923,7 @@ class astroImage(object):
     
     def reproject(self, projHead, exact=True, conserveFlux=False):
         # function to reproject the fits image
-        
+        from reproject import reproject_from_healpix, reproject_interp, reproject_exact
         
         # create new hdu
         if "PIXTYPE" in self.header and self.header["PIXTYPE"] == "HEALPIX":
@@ -2008,6 +2007,10 @@ class astroImage(object):
     
     def convolve(self, kernel, boundary='fill', fill_value=0.0, peakNorm=False, FWHM=True):
         
+        # import modules
+        from astropy.convolution import convolve_fft as APconvolve_fft
+        from astropy.convolution import Gaussian2DKernel
+        
         # see if 2D kernel is a number or an array
         if isinstance(kernel, type(1.0*u.arcsecond)) is False:
             kernelImage = kernel
@@ -2050,6 +2053,55 @@ class astroImage(object):
         
         return convolvedImage
     
+    
+    def cutout(self, centre, size, copy=False):
+        # function to create a cutout of the image
+        
+        # import astropy cutout routing
+        from astropy.coordinates import SkyCoord
+        from astropy.nddata.utils import Cutout2D
+        
+        # centre can be a SkyCoord or (X, Y pixels)
+        if isinstance(centre,SkyCoord) is False:
+            if isinstance(centre[0], u.Quantity) is False:
+                print("Units on centre not given - assuming in pixel coordinates")
+        
+        # adjust size info to flip as takes sizeY, sizeX, or warn if not in coordinates
+        if isinstance(size, (list, tuple, np.ndarray)) and isinstance(size,u.Quantity) is False:
+            newSize = (size[1], size[0])
+            if isinstance(size[0],u.Quantity) is False:
+                print("Units on size not given - assumin in pixel coordinates")
+        elif isinstance(size,u.Quantity):
+            if len(size.shape) > 0:
+                newSize = (size[1], size[0])
+            else:
+                newSize = size
+        else:
+            newSize = size
+            print("Units on size not given - assumin in pixel coordinates")
+        
+        
+        # create WCS information
+        WCSinfo = wcs.WCS(self.header)
+            
+        # create cutout
+        cutoutOut = Cutout2D(self.image, centre, newSize, wcs=WCSinfo, mode='partial', fill_value=np.nan, copy=copy)
+       
+        # create new header
+        cutHeader = self.header.copy()
+        cutHeadWCS = cutoutOut.wcs.to_header()
+        for keyword in cutHeadWCS:
+            cutHeader[keyword] = cutHeadWCS[keyword]
+        
+        # create astro image object from output
+        cutoutHdu = pyfits.PrimaryHDU(cutoutOut.data, cutHeader)
+        cutoutHdulist = pyfits.HDUList([cutoutHdu])
+        
+        # create combine astro image
+        cutoutImage = astroImage(cutoutHdulist, load=False, instrument=self.instrument, band=self.band)
+        
+        return cutoutImage
+        
         
     def imageFFTcombine(self, lowresImage, filterScale=None, beamArea=None, filterType="gauss", butterworthOrder=None, sigmoidScaling=None, beamMatchedMode=True):
         # function to combine this image with another
@@ -2198,6 +2250,10 @@ class astroImage(object):
     def plot(self, recentre=None, stretch='linear', vmin=None, vmid=None, vmax=None, cmap=None, facecolour='white', nancolour='black', hide_colourbar=False, save=None):
         # function to make a quick plot of the data using matplotlib and aplpy
         
+        # import modules
+        import aplpy
+        import matplotlib.pyplot as plt
+        
         # create figure
         fig = plt.figure()
         
@@ -2243,7 +2299,44 @@ class astroImage(object):
         
         # recentre image
         if recentre is not None:
-            f1.recenter(recentre['RA'].to(u.degree).value, recentre['DEC'].to(u.degree).value, recentre['rad'].to(u.degree).value)
+            # import skycoord object
+            from astropy.coordinates import SkyCoord
+            
+            # creat flag to check if centre found
+            noCentre = False
+            
+            # get/calculate SkyCood object
+            if "coord" in recentre:
+                centreCoord = recentre["coord"]            
+            elif "RA" in recentre and "DEC" in recentre:
+                centreCoord = SkyCoord(ra=recentre['RA'], dec=recentre['DEC'], frame='icrs')
+            elif "l" in recentre and "b" in recentre:
+                centreCoord = SkyCoord(l=recentre["l"], b=recentre['b'], frame='galactic')
+            else:
+                noCentre = True
+                print("Cannot recentre as no coordinate information identified")
+            
+            
+            if noCentre is False:
+                # get WCS infomation
+                WCSinfo = wcs.WCS(self.header)
+                
+                # convert to xpix and ypix
+                xpix, ypix = wcs.utils.skycoord_to_pixel(centreCoord, WCSinfo)
+                
+                # convert back to sky coordinates of image for APLpy
+                worldCoord = WCSinfo.all_pix2world([xpix],[ypix],0)
+            
+                
+                # see if radius or length/width data present 
+                if "rad" in recentre:    
+                    f1.recenter(worldCoord[0][0], worldCoord[1][0], radius=recentre['rad'].to(u.degree).value)
+                elif "radius" in recentre:
+                    f1.recenter(worldCoord[0][0], worldCoord[1][0], radius=recentre['radius'].to(u.degree).value)
+                elif "width" in recentre and "height" in recentre:
+                    f1.recenter(worldCoord[0][0], worldCoord[1][0], width=recentre['width'].to(u.degree).value, height=recentre['height'].to(u.degree).value)
+                else:
+                    print("Cannot recentre as no size information identified")
         
         # add colorbar
         if hide_colourbar is False:
@@ -2482,6 +2575,7 @@ class ppmapCube(object):
         artificialImage = astroImage(fitsHduList, load=False, instrument='PPMAP')
         
         return artificialImage
+
 
 # create function which loads in colour-corrections
 def loadColourCorrect(colFile, SPIREtype):
