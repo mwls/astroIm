@@ -386,49 +386,202 @@ class astroImage(object):
         return
     
     
-    def ellipseAnnulusBackSub(self, backInfo, backNoise=False, apply=False):
+    def ellipticalAnnulusBackSub(self, centre, inner=None, outer=None, axisRatio=None, PA=None, outerCircle=False, backNoise=False,\
+                               method='exact', subpixels=None, maskNaN=True, apply=False):
         # function to select pixels within an elliptical aperture
         
-        # extract background annulus parameters
-        centreRA = backInfo["centreRA"]
-        centreDEC = backInfo["centreDEC"]
-        innerRad = backInfo["innerRad"]
-        outerRad = backInfo["outerRad"]
-        PA = backInfo['PA']
+        # import required modules
+        from photutils import aperture_photometry
+        from astropy.table import Column
+        from astropy.table import join as tableJoin
+        from astropy.table import Table
+        from astropy.coordinates import SkyCoord
+        from photutils import SkyEllipticalAnnulus
+        from photutils import EllipticalAnnulus
         
-        # see if ra and dec maps already exist, if needed run
-        if hasattr(self, 'raMap') is False:
-            self.coordMaps()
+        # if axis ratio has been set then calculate minor
+        if inner is None or outer is None:
+            raise Exception("No Radius/Semi-major axis info given")
         
-        # convert PA to radians with correct axes
-        PA = (90.0-PA) / 180.0 * np.pi
+        if PA is None:
+            raise Exception("No Angle information is given")
         
-        # adjust D25 to degrees
-        innerMajorRad = innerRad[0]/(60.0)
-        innerMinorRad = innerRad[1]/(60.0)
-        outerMajorRad = outerRad[0]/(60.0)
-        outerMinorRad = outerRad[1]/(60.0)
+        # see if inner is just one value or two
+        if isinstance(inner, u.Quantity) and len(inner.shape) == 0:
+            if axisRatio is not None:
+                inner = np.array([inner.value, inner.value*axisRatio])*inner.unit
+            elif isinstance(outer, u.Quantity) and len(outer.shape) > 0:
+                inner = np.array([inner.value, inner.value * (outer[1]/outer[0]).value])*inner.unit
+            elif isinstance(outer, (list, tuple, np.ndarray)):
+                if isinstance(outer[0],u.Quantity):
+                    inner = np.array([inner.value, inner.value * (outer[1]/outer[0]).value])*inner.unit
+                else:
+                    inner = np.array([inner.value, inner.value * outer[1]/outer[0]])*inner.unit
+            else:
+                raise Exception("No information provided about minor axis")
+            
+        elif isinstance(inner, (list, tuple, np.ndarray)) is False:
+            if axisRatio is not None:
+                inner = np.array([inner, inner*axisRatio])
+            elif isinstance(outer, u.Quantity) and len(outer.shape) > 0:
+                inner = np.array([inner, inner * outer[1]/outer[0]])
+            elif isinstance(outer, (list, tuple, np.ndarray)):
+                inner = np.array([inner, inner * outer[1]/outer[0]])
+            else:
+                raise Exception("No information provided about minor axis")
         
-        # select pixels 
-        pixelSel = np.where((((self.raMap - centreRA)*np.cos(self.decMap / 180.0 * np.pi)*np.cos(PA) + (self.decMap - centreDEC)*np.sin(PA))**2.0 / outerMajorRad**2.0 + \
-                            (-(self.raMap - centreRA)*np.cos(self.decMap / 180.0 * np.pi)*np.sin(PA) + (self.decMap - centreDEC)*np.cos(PA))**2.0/ outerMinorRad**2.0 <= 1.0) &\
-                            (((self.raMap - centreRA)*np.cos(self.decMap / 180.0 * np.pi)*np.cos(PA) + (self.decMap - centreDEC)*np.sin(PA))**2.0 / innerMajorRad**2.0 + \
-                            (-(self.raMap - centreRA)*np.cos(self.decMap / 180.0 * np.pi)*np.sin(PA) + (self.decMap - centreDEC)*np.cos(PA))**2.0/ innerMinorRad**2.0 > 1.0) &\
-                            (np.isnan(self.image) == False))
         
-        # calculate the mean of the pixels and subtract from the image
-        backValue = self.image[pixelSel].mean()
+        # see if outer is just one value or two
+        if isinstance(outer, u.Quantity) and len(outer.shape) == 0:
+            if axisRatio is not None:
+                outer = np.array([outer.value, outer.value*axisRatio])*outer.unit
+            elif isinstance(inner, u.Quantity) and len(inner.shape) > 0:
+                outer = np.array([outer.value, outer.value * (inner[1]/inner[0]).value])*outer.unit
+            elif isinstance(inner, (list, tuple, np.ndarray)):
+                if isinstance(inner[0],u.Quantity):
+                    outer = np.array([outer.value, outer.value * (inner[1]/inner[0]).value])*outer.unit
+                else:
+                    outer = np.array([outer.value, outer.value * inner[1]/inner[0]])*outer.unit
+            else:
+                raise Exception("No information provided about minor axis")
+            
+        elif isinstance(outer, (list, tuple, np.ndarray)) is False:
+            if axisRatio is not None:
+                outer = np.array([outer, inner*axisRatio])
+            elif isinstance(inner, u.Quanitity) and len(inner.shape) > 0:
+                outer = np.array([outer, outer * inner[1]/inner[0]])
+            elif isinstance(inner, (list, tuple, np.ndarray)):
+                outer = np.array([outer, outer * inner[1]/inner[0]])
+            else:
+                raise Exception("No information provided about minor axis")
         
+        # if outerCircle is set change outer minor axis to match primary
+        if outerCircle is True:
+            outer[1] = outer[0]
+        
+        # set flag whether needed to load WCS info
+        try:
+            imgWCS = wcs.WCS(self.header)
+            pixOnly = False
+        except:
+            imgWCS = None
+            pixOnly = True
+        
+        # create mask to remove any NaN's
+        if maskNaN:
+            nanMask = np.zeros(self.image.shape, dtype=bool)
+            nanMask[np.isnan(self.image)] = True
+        else:
+            nanMask = False
+        
+        # check if PA is a quantity otherwise assume its degrees
+        if isinstance(PA, u.Quantity) is False:
+            PA = PA * u.degree
+        
+        
+        # see if centre is a sky coordinate use Sky aperture otherwise assume its pixel
+        if isinstance(centre, SkyCoord):
+            # see if inner is in pixels or angular units
+            if isinstance(inner[0], u.Quantity) is False:
+                # convert to angular size by multiplying by pixel size
+                if hasattr(self,'pixSize') is False:
+                    self.getPixelScale()
+                inner = inner * self.pixSize
+            
+            # see if outer is in pixels or angular units
+            if isinstance(outer[0], u.Quantity) is False:
+                # convert to angular size by multiplying by pixel size
+                if hasattr(self,'pixSize') is False:
+                    self.getPixelScale()
+                outer = outer * self.pixSize
+        
+            
+        
+            if pixOnly:
+                raise ValueError("Unable to read WCS and specified in Sky Coordinates")
+            
+            # create aperture object
+            aperture = SkyEllipticalAnnulus(centre, inner[0], outer[0], outer[1], inner[1], theta=PA)
+      
+        else:
+            # see if inner is in pixels or angular units
+            if isinstance(inner[0], u.Quantity):
+                # see if have the pixel size loaded
+                if hasattr(self,'pixSize') is False:
+                    self.getPixelSize()
+                
+                # convert to pixels by dividing by pixel size
+                inner = (inner / self.pixSize).value
+            
+            # see if inner is in pixels or angular units
+            if isinstance(outer[0], u.Quantity):
+                # see if have the pixel size loaded
+                if hasattr(self,'pixSize') is False:
+                    self.getPixelSize()
+                
+                # convert to pixels by dividing by pixel size
+                outer = (outer / self.pixSize).value
+            
+            # convert angle to be from x-axes not PA from north (both counter-clockwise
+            apPA = apPA - 90.0*u.degree
+            
+            # create aperture object
+            if pixOnly:
+                aperture = EllipticalAnnulus(centre, inner[0], outer[0], outer[1], inner[1], theta=PA.to(u.radian).value)
+            else:
+                aperture = EllipticalAnnulus(centre, inner[0], outer[0], outer[1], inner[1], theta=PA.to(u.radian).value).to_sky(imgWCS)
+            
+        # perform aperture photometry to find sum in the annulus
+        phot_table = aperture_photometry(self.image, aperture, wcs=imgWCS, method=method, subpixels=subpixels, mask=nanMask)
+        nPixTable = aperture_photometry(np.ones(self.image.shape), aperture, wcs=imgWCS, method=method, subpixels=subpixels, mask=nanMask)
+            
+        # calculate background mean value
+        backValue = phot_table['aperture_sum'][0] / nPixTable['aperture_sum'][0]
+        
+        # if desired calculate standard deviation of values in backgound region
+        if backNoise:
+            # first make sure aperture is converted to a pixel aperture
+            if pixOnly:
+                pixAperture = aperture
+            else:
+                pixAperture = aperture.to_pixel(imgWCS)
+            
+            # now create mask object
+            mask = pixAperture.to_mask(method='center', subpixels=subpixels)
+            
+            # create a zoomed in mask and select where values are one not zerp
+            sel = np.where(mask.multiply(np.ones(self.image.shape)) > 0.5)
+            noise = mask.cutout(self.image)[sel].std()
+            
+        
+        # if apply is set apply background subtraction to image
         if apply:
-            self.image = self.image - self.image[pixelSel].mean()
+            self.image = self.image - backValue
         
         # if back noise is set, find standard deviation and return value
         if backNoise:
-            noise = self.image[pixelSel].std() 
             return backValue, noise
         else:
             return backValue
         
+        
+    def circularAnnulusBackSub(self, centre, inner=None, outer=None, backNoise=False,\
+                               method='exact', subpixels=None, maskNaN=True, apply=False):
+        
+        # call the elliptical annulus function set to give results as if a circle
+        if backNoise:
+            backValue, noise = self.ellipticalAnnulusBackSub(centre, inner=inner, outer=outer, axisRatio=1.0, PA=0.0, outerCircle=True, backNoise=backNoise,\
+                                                             method=method, subpixels=subpixels, maskNaN=maskNaN, apply=apply)
+        else:
+            backValue = self.ellipticalAnnulusBackSub(centre, inner=inner, outer=outer, axisRatio=1.0, PA=0.0, outerCircle=True, backNoise=backNoise,\
+                                                      method=method, subpixels=subpixels, maskNaN=maskNaN, apply=apply)
+        
+        # if back noise is set, find standard deviation and return value
+        if backNoise:
+            return backValue, noise
+        else:
+            return backValue
+    
     
     def circularAperture(self, galInfo, radius=None, multiRadius = False, localBackSubtract=None, names=None, method='exact', subpixels=None, backMedian=False, maskNaN = True, error=None):
         # function to perform circular aperture photometry 
@@ -471,7 +624,7 @@ class astroImage(object):
                 else:
                     # just extract centre information
                     centres = {}
-                    for i in range(0,len(allKeys[i])):
+                    for i in range(0,len(allKeys)):
                         centres[allKeys[i]] = galInfo[allKeys[i]]["centre"]
                 
             else:
@@ -510,6 +663,14 @@ class astroImage(object):
         
         # set mode to circle
         mode = "ellipse"
+        
+        # if doing multi radius perform checks
+        if multiRadius:
+            if minor is not None:
+                raise ValueError("For multiple radial apertures, set the 'axisRatio' parameter with a fixed value, rather than setting 'minor'")
+            if isinstance(axisRatio,(list,tuple,np.ndarray)):
+                if isinstance(galInfo,(list,tuple,np.ndarray)) and len(galInfo) != len(axisRatio):
+                    raise ValueError("For multiple radial apertures, 'axisRatio' can only have one value per object")
         
         # see if variable provided is a dictionary of dictionaries or of skyCoord
         if isinstance(galInfo,dict):
@@ -571,7 +732,8 @@ class astroImage(object):
                     centres = {}
                     tempPA = []
                     tempAxisRatio = []
-                    for i in range(0,len(allKeys[i])):
+                    tempLocalBackSubtract = []
+                    for i in range(0,len(allKeys)):
                         # add centres to dictionary so retain names
                         centres[allKeys[i]] = galInfo[allKeys[i]]["centre"]
                     
@@ -586,9 +748,16 @@ class astroImage(object):
                             tempAxisRatio.append(galInfo[allKeys[i]]["axisRatio"])
                         else:
                             tempAxisRatio.append(axisRatio)
+                        
+                        # append local background subtract
+                        if "localBackSubtract" in galInfo[allKeys[i]]:
+                            tempLocalBackSubtract.append(galInfo[allKeys[i]]['localBackSubtract'])
+                        else:
+                            tempLocalBackSubtract.append(localBackSubtract)
                     
                     PA = tempPA
                     axisRatio = tempAxisRatio
+                    localBackSubtract = tempLocalBackSubtract
                         
             else:
                 centres = galInfo
@@ -610,26 +779,20 @@ class astroImage(object):
                 for i in range(0,len(axisRatio)):
                     minor.append(major * axisRatio[i])
             else:
-                minor = radius * axisRatio
+                minor = major * axisRatio
         
         
         # if doing one radius per object see if centres and radius have multiple values, that they are the same length 
         if multiRadius is False:
-            if isinstance(centres, (list, tuple, np.ndarray)) and isinstance(major, (list, tuple, np.ndarray)) and isinstance(radius, u.Quantity) is False:
+            if isinstance(centres, (list, tuple, np.ndarray)) and isinstance(major, (list, tuple, np.ndarray)) and isinstance(minor, u.Quantity) is False:
                 if len(centres) != len(major):
                     raise ValueError("List of centres is not same length as list of semi-major axis (if want multiple radii at one position set multiRadius to True)")
         
-            # check that if minor supplied is the same length as radius array (or single values
+            # check that if minor supplied is the same length as radius array (or single values)
             if isinstance(minor, (list, tuple, np.ndarray)) and isinstance(major, u.Quantity) is False:
                 if len(major) != len(minor):
                     raise ValueError("Semi-minor axis list is not same length as list of semi-major axos")
         
-        # if doing multi radius perform checks
-        if multiRadius:
-            if minor is not None:
-                raise ValueError("For multiple radial apertures, set the 'axisRatio' parameter with a fixed value, rather than setting 'minor'")
-            if isinstance(axisRatio,(list,tuple,np.ndarray)):
-                raise ValueError("For multiple radial apertures, 'axisRatio' requires a constant not a list of values")
             
         # check if doing local background subtraction that only one background radius, or same as centres
         if localBackSubtract is not None and isinstance(centres, (list, tuple, np.ndarray)) and isinstance(localBackSubtract, (list, tuple, np.ndarray)):
@@ -656,6 +819,23 @@ class astroImage(object):
     
         # perform aperture photometry
         phot_table = self.aperturePhotometry(mode, centres, major, minor=minor, PA=PA, multiRadius=multiRadius, localBackSubtract=localBackSubtract, names=names, method=method, subpixels=subpixels, backMedian=backMedian, maskNaN=maskNaN, error=error)
+
+        # calculate surface brightness profile if desired
+        calculateSB = True
+        if multiRadius and calculateSB:
+            ### create a table where radii is midway between the bins
+            
+            # calculate halfway bins for major and minor
+            halfMajor = self.halfBinArrays(major)
+            halfMinor = self.halfBinArrays(minor)
+            
+            # run photometry in these values
+            halfbin_phot_table = self.aperturePhotometry(mode, centres, halfMajor, minor=halfMinor, PA=PA, multiRadius=multiRadius, localBackSubtract=localBackSubtract, names=names, method=method, subpixels=subpixels, backMedian=backMedian, maskNaN=maskNaN, error=error)
+
+            self.surfaceBrightness(phot_table, halfbin_phot_table)
+
+            print("here")
+            
     
         return phot_table   
 
@@ -665,6 +845,15 @@ class astroImage(object):
         
         # set mode to circle
         mode = "rectangle"
+        
+        # if doing multi radius perform checks
+        if multiRadius:
+            if width is not None:
+                raise ValueError("For multiple size apertures, set the 'axisRatio' parameter with a fixed value, rather than setting 'width'")
+            if isinstance(ratio,(list,tuple,np.ndarray)):
+                if isinstance(galInfo,(list,tuple,np.ndarray)) and len(galInfo) != len(ratio):
+                    raise ValueError("For multiple radial apertures, 'ratio' can only have one value per object")
+        
         
         # see if variable provided is a dictionary of dictionaries or of skyCoord
         if isinstance(galInfo,dict):
@@ -726,7 +915,7 @@ class astroImage(object):
                     centres = {}
                     tempPA = []
                     tempRatio = []
-                    for i in range(0,len(allKeys[i])):
+                    for i in range(0,len(allKeys)):
                         # add centres to dictionary so retain names
                         centres[allKeys[i]] = galInfo[allKeys[i]]["centre"]
                     
@@ -744,11 +933,20 @@ class astroImage(object):
                     
                     PA = tempPA
                     ratio = tempRatio
+                    minor = width
+                    if isinstance(length, (list,tuple)):
+                        length = np.array(length) * 2.0
+                    else:
+                        major = length * 2.0
                         
             else:
                 centres = galInfo
+                minor = width
+                major = length
         else:
             centres = galInfo
+            minor = width
+            major = length
                     
         # see what is defined width or length ratio and create uniform
         if minor is None and ratio is not None:
@@ -765,12 +963,12 @@ class astroImage(object):
                 for i in range(0,len(ratio)):
                     minor.append(major * ratio[i])
             else:
-                minor = radius * ratio
+                minor = major * ratio
         
         
         # if doing one radius per object see if centres and radius have multiple values, that they are the same length 
         if multiRadius is False:
-            if isinstance(centres, (list, tuple, np.ndarray)) and isinstance(major, (list, tuple, np.ndarray)) and isinstance(radius, u.Quantity) is False:
+            if isinstance(centres, (list, tuple, np.ndarray)) and isinstance(major, (list, tuple, np.ndarray)) and isinstance(minor, u.Quantity) is False:
                 if len(centres) != len(major):
                     raise ValueError("List of centres is not same length as list of semi-major axis (if want multiple radii at one position set multiRadius to True)")
         
@@ -779,12 +977,6 @@ class astroImage(object):
                 if len(major) != len(minor):
                     raise ValueError("Semi-minor axis list is not same length as list of semi-major axos")
         
-        # if doing multi radius perform checks
-        if multiRadius:
-            if minor is not None:
-                raise ValueError("For multiple radial apertures, set the 'axisRatio' parameter with a fixed value, rather than setting 'minor'")
-            if isinstance(ratio,(list,tuple,np.ndarray)):
-                raise ValueError("For multiple radial apertures, 'axisRatio' requires a constant not a list of values")
             
         # check if doing local background subtraction that only one background radius, or same as centres
         if localBackSubtract is not None and isinstance(centres, (list, tuple, np.ndarray)) and isinstance(localBackSubtract, (list, tuple, np.ndarray)):
@@ -815,7 +1007,7 @@ class astroImage(object):
         return phot_table
     
     
-    def aperturePhotometry(self, mode, centres, radius, minor=None, PA=None, multiRadius = False, localBackSubtract=None, names=None, method='exact', subpixels=None, backMedian=False, maskNaN = True, error=None):
+    def aperturePhotometry(self, mode, centres, radius, minor=None, PA=None, multiRadius = False, localBackSubtract=None, names=None, method='exact', subpixels=None, backMedian=False, maskNaN=True, error=None):
         # function to perform photometry
         
         # import required modules
@@ -848,7 +1040,11 @@ class astroImage(object):
             if localBackSubtract:
                 from photutils import SkyRectangularAnnulus
                 from photutils import RectangularAnnulus
-            
+
+        # if names is not none, see if a list, if not make it one
+        if names is not None:
+            if isinstance(names,(list,tuple)) is False:
+                names = [names]
         
         # if centres is a dictionary split into names
         if isinstance(centres, dict):
@@ -918,6 +1114,9 @@ class astroImage(object):
             centres  = [centres]
         elif isinstance(centres, (list, tuple, np.ndarray)) is False:
             centres = [centres]
+        else:
+            if len(centres) == 2 and isinstance(centres[0], (float, int, np.float, np.int)) and isinstance(centres[0], (float, int, np.float, np.int)):
+                centres = [centres]
         
         # arrays to hold indicies
         if multiRadius:
@@ -926,7 +1125,6 @@ class astroImage(object):
         
         # loop over each centre, see if pixel or SkyCoord
         for i in range(0,len(centres)):
-                
             # if doing multiRadius loop over all otherwise put in single element list to loop over
             if multiRadius:
                 masterRadius = radius
@@ -942,7 +1140,10 @@ class astroImage(object):
             # if doing ellipse format the minor radius and get PA
             if mode == "ellipse" or mode == "rectangle":
                 if multiRadius:
-                    masterMinor = [minor]
+                    if isinstance(minor,list) and len(minor) == len(centres):
+                        masterMinor = minor[i]
+                    else:
+                        masterMinor = minor
                 else:
                     # see if radius varies for each centre or is a constant
                     if isinstance(minor, u.Quantity):
@@ -961,13 +1162,25 @@ class astroImage(object):
                 if isinstance(apPA, u.Quantity) is False:
                     apPA = apPA * u.degree
                 
+            # if first radius in a multi-radius run is zero 
+            if multiRadius:
+                zeroFirst = False
+                if isinstance(masterRadius[0], u.Quantity):
+                    if masterRadius[0].value == 0.0:
+                        zeroFirst = True
+                else:
+                    if masterRadius[0] == 0.0:
+                        zeroFirst = True
                 
             
             # loop over every radius if multi-radius
             for j in range(0,len(masterRadius)):
                 rad = masterRadius[j]
                 if mode == "ellipse" or mode == "rectangle":
-                    minorRad = masterMinor[j]
+                    minorRad = masterMinor[j]                        
+                
+                if multiRadius and zeroFirst and j == 0:
+                    continue
                 
                 # get the background radius for each centre or see if same for each
                 if localBackSubtract is not None:
@@ -975,7 +1188,7 @@ class astroImage(object):
                         backRadInfo = localBackSubtract[i]
                         if backRadInfo is not None:
                             if mode == "ellipse" and "outerCircle" not in backRadInfo:
-                                backRadInfo["outcerCircle"] = False
+                                backRadInfo["outerCircle"] = False
                     elif isinstance(localBackSubtract['inner'],u.Quantity) is False and isinstance(localBackSubtract['inner'], (list,tuple, np.ndarray)):
                         backRadInfo = {"inner":localBackSubtract['inner'][i], "outer":localBackSubtract['outer'][i]}
                         if mode == "ellipse":
@@ -996,14 +1209,14 @@ class astroImage(object):
                     # see if radius is in pixels or angular units
                     if isinstance(rad, u.Quantity) is False:
                         # convert to angular size by multiplying by pixel size
-                        if hasattr(self,pixSize) is False:
+                        if hasattr(self,'pixSize') is False:
                             self.getPixelScale()
                         rad = rad * self.pixSize
                     
                     if mode == "ellipse" or mode == "rectangle":
                         if isinstance(minorRad, u.Quantity) is False:
                             # convert to angular size by multiplying by pixel size
-                            if hasattr(self,pixSize) is False:
+                            if hasattr(self,'pixSize') is False:
                                 self.getPixelScale()
                             minorRad = minorRad * self.pixSize
                     
@@ -1013,14 +1226,14 @@ class astroImage(object):
                         # see if back inner radius is in pixels or angular units
                         if isinstance(backRadInfo["inner"], u.Quantity) is False:
                             # convert to angular size by multiplying by pixel size
-                            if hasattr(self,pixSize) is False:
+                            if hasattr(self,'pixSize') is False:
                                 self.getPixelScale()
                             backRadInfo["inner"] = backRadInfo["inner"] * self.pixSize
                         
                         # see if back outer                         
                         if isinstance(backRadInfo["outer"], u.Quantity) is False:
                             # convert to angular size by multiplying by pixel size
-                            if hasattr(self,pixSize) is False:
+                            if hasattr(self,'pixSize') is False:
                                 self.getPixelScale()
                             backRadInfo["outer"] = backRadInfo["outer"] * self.pixSize
                             
@@ -1039,22 +1252,28 @@ class astroImage(object):
                     # if doing local subtraction create background aperture
                     if localBackSubtract is not None:
                         if backRadInfo is not None:
+                            if mode == "ellipse" or mode == "rectangle":
+                                if multiRadius:
+                                    backgroundRatio = (masterMinor[-1] / masterRadius[-1]).value
+                                else:
+                                    backgroundRatio = minorRad/rad
+                            
                             if mode == "circle":
                                 backApertures.append(SkyCircularAnnulus(centres[i], r_in=backRadInfo["inner"], r_out=backRadInfo["outer"]))
                             elif mode == "ellipse":
                                 if backRadInfo["outerCircle"]:
-                                    backApertures.append(SkyEllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"], b_in=backRadInfo["inner"]*minorRad/rad, theta=apPA))
+                                    backApertures.append(SkyEllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"], b_in=backRadInfo["inner"]*backgroundRatio, theta=apPA))
                                 else:
-                                    backApertures.append(SkyEllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*minorRad/rad, theta=apPA))
+                                    backApertures.append(SkyEllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*backgroundRatio, theta=apPA))
                             elif mode == "rectangle":
-                                backApertures.append(SkyRectangularAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*minorRad/rad, theta=apPA))
+                                backApertures.append(SkyRectangularAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*backgroundRatio, theta=apPA))
                         else:
                             backApertures.append(None)
                 else:
                     # see if radius is in pixels or angular units
                     if isinstance(rad, u.Quantity):
                         # see if have the pixel size loaded
-                        if hasattr(self,pixSize) is False:
+                        if hasattr(self,'pixSize') is False:
                             self.getPixelScale()
                         
                         # convert to pixels by dividing by pixel size
@@ -1062,9 +1281,9 @@ class astroImage(object):
                     
                     
                     if mode == "ellipse" or mode == "rectangle":
-                        if isinstance(minorRad, u.Quantity) is False:
+                        if isinstance(minorRad, u.Quantity):
                             # convert to pixel size by diving by pixel size
-                            if hasattr(self,pixSize) is False:
+                            if hasattr(self,'pixSize') is False:
                                 self.getPixelScale()
                             minorRad = (minorRad / self.pixSize).value
                             
@@ -1072,18 +1291,18 @@ class astroImage(object):
                     # see if background radius is in pixel or angular units
                     if localBackSubtract is not None and backRadInfo is not None:
                         # see if back inner radius is in pixels or angular units
-                        if isinstance(backRadInfo["inner"], u.Quantity) is False:
+                        if isinstance(backRadInfo["inner"], u.Quantity):
                             # see if have the pixel size loaded
-                            if hasattr(self,pixSize) is False:
+                            if hasattr(self,'pixSize') is False:
                                 self.getPixelScale()
                                 
                             # convert to pixels by dividing by pixel size
                             backRadInfo["inner"] = (backRadInfo["inner"] / self.pixSize).value
                         
                         # see if back inner radius is in pixels or angular units
-                        if isinstance(backRadInfo["outer"], u.Quantity) is False:
+                        if isinstance(backRadInfo["outer"], u.Quantity):
                             # see if have the pixel size loaded
-                            if hasattr(self,pixSize) is False:
+                            if hasattr(self,'pixSize') is False:
                                 self.getPixelScale()
                                 
                             # convert to pixels by dividing by pixel size
@@ -1104,15 +1323,21 @@ class astroImage(object):
                             apertures.append(PixRectangularAperture(centres[i], rad, minorRad, theta=apPA.to(u.radian).value))
                             
                         if localBackSubtract:
+                            if mode == "ellipse" or mode == "rectangle":
+                                if multiRadius:
+                                    backgroundRatio = masterMinor[-1] / masterRadius[-1]
+                                else:
+                                    backgroundRatio = minorRad/rad
+                            
                             if mode == "circle":
                                 backApertures.append(CicularAnnulus(centres[i], r_in=backRadInfo['inner'], r_out=backRadInfo['outer']))
                             elif mode == "ellipse":
                                 if backRadInfo["outerCircle"]:
-                                    backApertures.append(EllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"], b_in=backRadInfo["inner"]*minorRad/rad, theta=apPA))
+                                    backApertures.append(EllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"], b_in=backRadInfo["inner"]*backgroundRatio, theta=apPA.to(u.radian).value))
                                 else:
-                                    backApertures.append(EllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*minorRad/rad, theta=apPA))
+                                    backApertures.append(EllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*backgroundRatio, theta=apPA.to(u.radian).value))
                             elif mode == "rectangle":
-                                backApertures.append(RectangularAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*minorRad/rad, theta=apPA))
+                                backApertures.append(RectangularAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*backgroundRatio, theta=apPA.to(u.radian).value))
                     else:
                         if mode == "circle":
                             apertures.append(PixCircularAperture(centres[i], r=rad).to_sky(imgWCS))
@@ -1122,15 +1347,21 @@ class astroImage(object):
                             apertures.append(PixRectangularAperture(centres[i], rad, minorRad, theta=apPA.to(u.radian).value).to_sky(imgWCS))
                             
                         if localBackSubtract:
+                            if mode == "ellipse" or mode == "rectangle":
+                                if multiRadius:
+                                    backgroundRatio = masterMinor[-1] / masterRadius[-1]
+                                else:
+                                    backgroundRatio = minorRad/rad
+                            
                             if mode == "circle":
-                                backApertures.append(CicularAnnulus(centres[i], r_in=backRadInfo['inner'], r_out=backRadInfo['outer']).to_sky(imgWCS))
+                                backApertures.append(CircularAnnulus(centres[i], r_in=backRadInfo['inner'], r_out=backRadInfo['outer']).to_sky(imgWCS))
                             elif mode == "ellipse":
                                 if backRadInfo["outerCircle"]:
-                                    backApertures.append(EllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"], b_in=backRadInfo["inner"]*minorRad/rad, theta=apPA).to_sky(imgWCS))
+                                    backApertures.append(EllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"], b_in=backRadInfo["inner"]*backgroundRatio, theta=apPA.to(u.radian).value).to_sky(imgWCS))
                                 else:
-                                    backApertures.append(EllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*minorRad/rad, theta=apPA).to_sky(imgWCS))
+                                    backApertures.append(EllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*backgroundRatio, theta=apPA.to(u.radian).value).to_sky(imgWCS))
                             elif mode == "rectangle":
-                                backApertures.append(RectangularAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*minorRad/rad, theta=apPA).to_sky(imgWCS))
+                                backApertures.append(RectangularAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"]*backgroundRatio, theta=apPA.to(u.radian).value).to_sky(imgWCS))
                 
                 # multiple radius mode need to know the centre and radius
                 if multiRadius:
@@ -1146,7 +1377,15 @@ class astroImage(object):
                                    
             # perform backgound subtraction if requested
             if localBackSubtract is not None:
-                if isinstance(localBackSubtract, (list,tuple,np.ndarray)) is False or localBackSubtract[i] is not None:
+                backApertureExist = False
+                if multiRadius:
+                    if isinstance(localBackSubtract, (list,tuple,np.ndarray)) is False or localBackSubtract[MRi[i]] is not None:
+                        backApertureExist = True
+                else:
+                    if isinstance(localBackSubtract, (list,tuple,np.ndarray)) is False or localBackSubtract[i] is not None:
+                        backApertureExist = True
+                
+                if backApertureExist:
                     # calculate either median or mean
                     if backMedian:
                         if pixOnly:
@@ -1218,6 +1457,13 @@ class astroImage(object):
                         multiRadApErr = np.zeros((len(centres),len(masterRadius)))
                         multiRadApErr[:,:] = np.nan
                 
+                # if first aperture is zero set the first row flux to zero
+                if i == 0 and zeroFirst:
+                    multiRadApSum[:,0] = 0.0
+                    multiRadNpix[:,0] = 0.0
+                    if error is not None:
+                        multiRadApErr[:,0] = 0.0
+                
                 # update the 2D arrays to include the values 
                 multiRadApSum[MRi[i],MRj[i]] = ind_phot_table['aperture_sum']
                 multiRadNpix[MRi[i],MRj[i]] = ind_nPixTable['aperture_sum']
@@ -1258,7 +1504,7 @@ class astroImage(object):
             elif mode == "ellipse":
                 phot_table['Semi-Major'] = radius
             elif mode == "rectangle":
-                phot_table['Length'] = radius
+                phot_table['Semi-Length'] = radius
             
             # loop over each centre and add to table columns
             for i in range(0,len(centres)):
@@ -1300,18 +1546,18 @@ class astroImage(object):
             
             # ad rows
             phot_table['id'] = range(1,len(phot_xcenter)+1)
-            phot_table['xcenter'] = phot_xcenter
-            phot_table['ycenter'] = phot_ycenter
+            phot_table['xcentre'] = phot_xcenter
+            phot_table['ycentre'] = phot_ycenter
             if "sky_center" in ind_phot_table.colnames:
-                phot_table['sky_center'] = phot_sky_center
+                phot_table['sky_centre'] = phot_sky_center
             phot_table['number_pixels'] = phot_npix
             phot_table['aperture_sum'] = phot_apsum
             if error is not None:
                 phot_table['aperture_error'] = phot_aperr
                        
             # add unit to xcenter and ycenter
-            phot_table['xcenter'].unit = u.pix
-            phot_table['ycenter'].unit = u.pix
+            phot_table['xcentre'].unit = u.pix
+            phot_table['ycentre'].unit = u.pix
                         
             # change to mean if in surface brightness units
             if calculateMean:    
@@ -1353,6 +1599,136 @@ class astroImage(object):
         
         return phot_table
     
+    def halfBinArrays(self, radArray):
+        # function which calculates halfway bins for surface brightness function
+        
+        nestedList = True
+        if isinstance(radArray, list):
+            if isinstance(radArray[0], (list, tuple, np.ndarray)) is False:
+                adjustedArray = [radArray]
+                nestedList = False
+            else:
+                adjustedArray = radArray
+        else:
+            adjustedArray = [radArray]
+            nestedList = False
+        
+        # if nestedList need to create a list to store half-arrays
+        if nestedList:
+            outBins = []
+        
+        # loop over everyset of radii
+        for i in range(0,len(adjustedArray)):
+            currentBins = adjustedArray[i]
+        
+            # see if starts with a 'radius' of zero
+            zeroFirst=False
+            if isinstance(currentBins[0],u.Quantity) is True:
+                if currentBins[0].value == 0.0:
+                    zeroFirst = True
+            else:
+                if currentBins[0] == 0.0:
+                    zeroFirst = True
+            
+            if zeroFirst:
+                halfBins = np.array([])
+                if isinstance(currentBins[0],u.Quantity):
+                    halfBins = halfBins * currentBins[0].unit
+            else:
+                # first see if in the step size we would go below r=0.0 
+                if (currentBins[1] - currentBins[0]) / 2.0 >= currentBins[0]:
+                    if isinstance(currentBins[0],u.Quantity):
+                        halfBins = 0.0 * currentBins[0].unit
+                    else:
+                        halfBins = 0.0
+                else:
+                    halfBins = currentBins[0] - (currentBins[1] - currentBins[0]) / 2.0
+                
+            # now add in all the steps between
+            halfBins = np.append(halfBins, currentBins[:-1] + (currentBins[1:]-currentBins[:-1])/2.0)
+                
+            # now add final bin
+            halfBins = np.append(halfBins, currentBins[-1] + (currentBins[-1]-currentBins[-2])/2.)
+        
+            if nestedList:
+                outBins.append(halfBins)
+            else:
+                outBins = halfBins
+        
+        return outBins
+                
+    def surfaceBrightness(self, phot_table, half_bin_table):
+        # function to calculate surface brightness profiles
+        
+        # get list objects, and find if surface brightness or sum
+        colnames = phot_table.colnames
+        objNames = []
+        for colname in colnames[1:]:
+            if colname[-12:] == "aperture_sum":
+                objNames.append(colname[:-13])
+                surfaceBrightnessUnits = False
+            if colname[-12:] == "aperture_mean":
+                objNames.append(colname[:-13])
+                surfaceBrightnessUnits = True
+        
+        # see if can get pixel area otherwise do in units of per pixel
+        if hasattr(self, "pixSize"):
+            try:
+                self.getPixelScale()
+            except:
+                pass
+        if hasattr(self, "pixSize"):
+            pixArea = (self.pixSize)**2.0
+            pixArea = pixArea.to(u.arcsec**2.0).value
+            pixAreaKnown = True
+        else:
+            pixArea = 1.0
+            pixAreaKnown = False
+                
+        # loop over each object
+        for objName in objNames:
+            # see if starts with a 'radius' of zero
+            if phot_table[colnames[0]][0] == 0.0:
+                if surfaceBrightnessUnits:
+                    surfaceBrightness = np.array(half_bin_table[objName+"_aperture_mean"][0]*half_bin_table[objName+"_number_pixels"][0] / (half_bin_table[objName+"_number_pixels"][0]*pixArea))
+                else:
+                    surfaceBrightness = np.array(half_bin_table[objName+"_aperture_sum"][0] / (half_bin_table[objName+"_number_pixels"][0]*pixArea))
+            else:
+                surfaceBrightness = np.array([])
+            
+            # calculate rest of surface brightness points
+            if surfaceBrightnessUnits:
+                surfaceBrightness = np.append(surfaceBrightness,(half_bin_table[objName+"_aperture_mean"].data[1:]*half_bin_table[objName+"_number_pixels"].data[1:] - half_bin_table[objName+"_aperture_mean"].data[:-1]*half_bin_table[objName+"_number_pixels"].data[:-1]) / \
+                                             ((half_bin_table[objName+"_number_pixels"].data[1:] - half_bin_table[objName+"_number_pixels"].data[:-1])*pixArea)) 
+            else:
+                surfaceBrightness = np.append(surfaceBrightness,(half_bin_table[objName+"_aperture_sum"].data[1:] - half_bin_table[objName+"_aperture_sum"].data[:-1]) / \
+                                             ((half_bin_table[objName+"_number_pixels"].data[1:] - half_bin_table[objName+"_number_pixels"].data[:-1])*pixArea)) 
+            
+            # see if error has been included
+            if objName + "_aperture_error" in colnames or objName + "_aperture_mean_error" in colnames:
+                if phot_table[colnames[0]][0] == 0.0:
+                    if surfaceBrightnessUnits:
+                        surfaceBrightnessErr = np.array(half_bin_table[objName+"_aperture_mean_error"][0]*half_bin_table[objName+"_number_pixels"][0] / (half_bin_table[objName+"_number_pixels"][0]*pixArea))
+                    else:
+                        surfaceBrightnessErr = np.array(half_bin_table[objName+"_aperture_error"][0] / (half_bin_table[objName+"_number_pixels"][0]*pixArea))
+                else:
+                    surfaceBrightness = np.array([])
+                
+                # calculate rest of surface brightness points
+                if surfaceBrightnessUnits:
+                    surfaceBrightnessErr = np.append(surfaceBrightness,np.sqrt((half_bin_table[objName+"_aperture_mean_error"].data[1:]*half_bin_table[objName+"_number_pixels"].data[1:])**2.0 - (half_bin_table[objName+"_aperture_mean_error"].data[:-1]*half_bin_table[objName+"_number_pixels"].data[:-1])**2.0) / \
+                                                 ((half_bin_table[objName+"_number_pixels"].data[1:] - half_bin_table[objName+"_number_pixels"].data[:-1])*pixArea)) 
+                else:
+                    surfaceBrightnessErr = np.append(surfaceBrightness,np.sqrt(half_bin_table[objName+"_aperture_error"].data[1:]**2.0 - half_bin_table[objName+"_aperture_error"].data[:-1]**2.0) / \
+                                                 ((half_bin_table[objName+"_number_pixels"].data[1:] - half_bin_table[objName+"_number_pixels"].data[:-1])*pixArea)) 
+             
+            # add surface brightness to the table
+            phot_table[objName+"_surface_brightness"] = surfaceBrightness
+            phot_table[objName+"_surface_brightness"].unit = self.unit + " arcsec^-2"
+            if objName + "_aperture_error" in colnames or objName + "_aperture_mean_error" in colnames:
+               phot_table[objName+"_surface_brightness_error"] = surfaceBrightness
+               phot_table[objName+"_surface_brightness_error"].unit = self.unit + " arcsec^-2" 
+            
         
     def coordMaps(self):
         # function to find ra and dec co-ordinates of every pixel
