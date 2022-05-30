@@ -1738,7 +1738,7 @@ class astroImage(object):
         
         # Parse the WCS keywords in the primary HDU
         header = self.header
-        wcs = wcs.WCS(self.header)
+        wcsInfo = wcs.WCS(self.header)
         
         # Make input arrays for every pixel on the map
         xpix = np.zeros((header["NAXIS1"]*header["NAXIS2"]),dtype=int)
@@ -1749,7 +1749,7 @@ class astroImage(object):
             ypix[(i)*header["NAXIS1"]:(i+1)*header["NAXIS1"]] = i
         
         # Convert all pixels into sky co-ordinates
-        sky = wcs.pixel_to_world(xpix,ypix)
+        sky = wcsInfo.pixel_to_world(xpix,ypix)
         
         # check that is in IRCS format
         if sky.is_equivalent_frame(ICRS()) is False:
@@ -1775,11 +1775,117 @@ class astroImage(object):
             raise Exception("Not programmed to deal with ra that crosses ra=0")
         
         # return two maps
-        self.raMap = raMap
-        self.decMap = decMap
+        self.raMap = raMap * u.degree
+        self.decMap = decMap * u.degree
         
         return
     
+    def pixelRadius(self, coordinate, major=None, minor=None, axisRatio=None, inclin=None, PA=None):
+        
+        # create blank radius map
+        radMap = np.zeros(self.image.shape)
+        
+        # Parse the WCS keywords in the primary HDU
+        header = self.header
+        wcsInfo = wcs.WCS(self.header)
+        
+        # get pixel size
+        if hasattr(self, "pixSize") is False:
+            self.getPixelScale()
+        
+        # Make array of x and y for every pixel on map
+        xpix = np.zeros(radMap.shape,dtype=int)
+        for i in range(0,radMap.shape[1]):
+            xpix[:,i] = i
+        ypix = np.zeros(radMap.shape,dtype=int)
+        for i in range(0,int(radMap.shape[0])):
+            ypix[i,:] = i
+    
+        
+        # Convert all pixels into sky co-ordinates
+        sky = wcsInfo.pixel_to_world(xpix,ypix)
+    
+        # get centre
+        from astropy.coordinates import SkyCoord
+        if isinstance(coordinate, SkyCoord):
+            # make sure modules required are imported
+            from astropy.wcs.utils import skycoord_to_pixel
+            
+            # get X, Y pixel of coordinates
+            tempCentre = skycoord_to_pixel(coordinate, wcsInfo, origin=0)
+            pixCentre=[0.0,0.0]
+            pixCentre[0] = float(tempCentre[0])
+            pixCentre[1] = float(tempCentre[1])
+            
+        elif isinstance(coordinate, (list, tuple, np.ndarray)) and len(coordinate) == 2:
+            pixCentre = [float(coordinate[0]),float(coordinate[1])]
+        else:
+            raise Exception("Coordinate is not a recognised SkyCoordinate or pixel coordinate")
+        
+        # calculate inclination
+        if inclin is not None:
+            if isinstance(inclin, u.Quantity) is False:
+                inclin = inclin * u.deg
+            inclin = inclin.to(u.rad)
+        elif axisRatio is not None:
+            inclin = numpy.arccos(axisRatio)
+        elif major is not None and minor is not None:
+            if isinstance(major, u.Quantity) and isinstance(minor, u.Quantity):
+                inclin = numpy.arccos((minor/major).value)
+            elif isinstance(major, u.Quantity) and isinstance(minor, u.Quantity) is False:
+                raise Exception("Major is provided as a quantity, but minor is a value")
+            elif isinstance(major, u.Quantity) is False and isinstance(minor, u.Quantity):
+                raise Exception("Minor is provided as a quantity, but major is a value")
+            else:
+                inclin = numpy.arccos(minor/major)
+        elif major is not None or minor is not None:
+            raise Exception("Only one of major or minor is specified")
+        else:
+            inclin = 0.0
+                    
+        # see if image is rotated
+        if wcsInfo.wcs.has_crota() == True or wcsInfo.wcs.has_cdi_ja() == True or wcsInfo.wcs.has_crotaia() == True or wcsInfo.wcs.has_pci_ja()==True:
+            if wcsInfo.wcs.has_cdi_ja():
+                if wcsInfo.wcs.cd[1,0] == 0.0 and wcsInfo.wcs.cd[0,1] == 0.0:
+                    rotation = 0.0
+                else:
+                    rotation = np.arctan(wcsInfo.wcs.cd[1][0]/wcsInfo.wcs.cd[0][0])
+            elif wcsInfo.wcs.has_pci_ja():
+                if wcsInfo.wcs.pc[1,0] == 0.0 and wcsInfo.wcs.pc[0,1] == 0.0:
+                    rotation = 0.0
+                else:
+                    rotation = np.arctan(wcsInfo.wcs.pc[1][0]/wcsInfo.wcs.pc[0][0])
+            else:
+                try:
+                    rotation = wcsInfo.wcs.crota[1]
+                    rotation = rotation / 180.0 * np.pi
+                except:
+                    raise Exception("Rotation calculation not programmed for this header")
+        else:
+            rotation = 0.0
+        
+        ## calculate imagePA
+        # if no PA defined assumed 0.0
+        if PA is None:
+            tempPA = 0.0
+        elif isinstance(PA, u.Quantity):
+            tempPA = PA.to(u.rad).value
+        else:
+            tempPA = PA * np.pi / 180.0
+        
+        # PA is east of North, convert to image coordinates including rotation
+        PA = -1.0 * (np.pi/2.0 - tempPA) + rotation
+        
+        # calculate radius (in arcsecond)
+        Xsquare = ((xpix - pixCentre[0]) * np.cos(PA) + (ypix - pixCentre[1]) * np.sin(PA))**2.0
+        Ysquare = (-(xpix - pixCentre[0]) * np.sin(PA) + (ypix - pixCentre[1]) * np.cos(PA))**2.0
+        radMap = np.sqrt(Xsquare + Ysquare / np.cos(inclin)**2.0)
+        # adjust for physical size of pixels
+        radMap = radMap * self.pixSize           
+        
+        # return radius map
+        return radMap
+        
     
     def standardBeamAreas(self, instrument=None, band=None):
         # define standard beam areas
@@ -2737,6 +2843,12 @@ class astroImage(object):
         fitsHduList.writeto(outPath, overwrite=overwrite)
 
         return
+    
+    
+    def fitsHdu(self):
+        fitsHdu = pyfits.PrimaryHDU(self.image, self.header)
+        
+        return fitsHdu
     
 
 # PPMAP cube class
