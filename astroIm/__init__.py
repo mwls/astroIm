@@ -1,1 +1,2 @@
-from .astroIm import astroImage, ppmapCube, loadColourCorrect
+from .astroIm import astroImage, loadColourCorrect, multiPowerSpectraPlot
+from .ppmapCube import ppmapCube

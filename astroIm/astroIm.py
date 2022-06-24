@@ -23,6 +23,10 @@ from scipy import interpolate
 import copy
 import pickle
 
+###############################################################################################################
+###############################################################################################################
+###############################################################################################################
+
 # define classes
 
 # image class to make adjustments to image required
@@ -307,6 +311,122 @@ class astroImage(object):
         
         return
     
+    ###############################################################################################################
+    ###############################################################################################################
+    ###############################################################################################################
+    
+    # section of pre-programmed data/instrument properties
+    
+    
+    def standardBeamAreas(self, instrument=None, band=None):
+        # define standard beam areas
+        beamAreas = {"SCUBA-2":{"450":141.713*u.arcsecond**2., "850":246.729*u.arcsecond**2.},\
+                     "SPIRE":{"250":469.4*u.arcsecond**2., "350":831.3*u.arcsecond**2., "500":1804.3*u.arcsecond**2.},\
+                     "NIKA2":{"260":215.0*u.arcsecond**2., "160":432.0*u.arcsecond**2.},\
+                     "Planck":{"857":24.244*u.arcmin**2, "545":26.535*u.arcmin**2, "353":26.714*u.arcmin**2, "217":28.447*u.arcmin**2,\
+                               "143":59.954*u.arcmin**2, "100":105.778*u.arcmin**2, "070":200.742*u.arcmin**2, "044":832.946*u.arcmin**2, "030":1189.513*u.arcmin**2}, 
+                     "SCUBA-2&Planck":{"850":246.729*u.arcsecond**2.}, "SCUBA-2&SPIRE":{"450":141.713*u.arcsecond**2.},\
+                     "NIKA-2&Planck":{"260":215.0*u.arcsecond**2., "160":432.0*u.arcsecond**2.}}
+        
+        if instrument is not None:
+            return beamAreas[instrument][band]
+        else:
+            return beamAreas
+    
+    ###############################################################################################################
+    
+    def standardCentralWavelengths(self, instrument=None, band=None):
+        # define central wavelengths for bands in micron
+        centralWavelengths = {"SCUBA-2":{"450":450.0*u.micron, "850":850.0*u.micron}, 
+                              "SPIRE":{"250":250.0*u.micron, "350":350.0*u.micron, "500":500.0*u.micron},\
+                              "PACS":{"70":70.0*u.micron, "100":100*u.micron, "160":160.0*u.micron},\
+                              "NIKA-2":{"260":1.15*u.mm, "160":1.875*u.mm**2.},\
+                              "Planck":{"353":850.0*u.micron}}
+        
+        if instrument is not None:
+            return centralWavelengths[instrument][band]
+        else:
+            return centralWavelengths
+    
+    ###############################################################################################################
+    
+    def standardFWHM(self, instrument=None, band=None):
+        # define central wavelengths for bands in micron
+        FWHMs = {"SCUBA-2":{"450":7.9*u.arcsecond, "850":13.0*u.arcsecond},\
+                 "SPIRE":{"250":17.6*u.arcsecond, "350":23.9*u.arcsecond, "500":35.2*u.arcsecond},\
+                 "NIKA-2":{"260":11.1*u.arcsecond, "160":17.6*u.arcsecond},\
+                 "Planck":{"857":4.325*u.arcmin, "545":4.682*u.arcmin, "353":4.818*u.arcmin, "217":4.990*u.arcmin,\
+                           "143":7.248*u.arcmin, "100":9.651*u.arcmin, "070":13.252*u.arcmin, "044":27.005*u.arcmin, "030":32.239*u.arcmin}}
+        
+        if instrument is not None and band is not None:
+            return FWHMs[instrument][band]
+        elif instrument is None and band is not None:
+            raise Exception("Band specified but not Instrument")
+        elif instrument is not None and band is None:
+            raise Exception("Instrument specified but not Band")
+        else:
+            return FWHMs
+    
+    ###############################################################################################################
+
+    def standardInstrumentalUnit(self, instrument, unit):
+        # define standard instrumental units and provide function to test if they are programmed
+        instrumentUnits = {"SCUBA-2":"pW",\
+                           "Planck":"K_CMB"}
+        
+        if instrument in instrumentUnits and instrumentUnits[instrument] == unit:
+            return True
+        else:
+            return False
+    
+    ###############################################################################################################
+
+    def standardInstrumentConversion(self, instrument=None, band=None):
+        # standard instrument conversions from instrumental units to alternative units
+        instrumentConversions = {"SCUBA-2":{"450":{"outUnit":"Jy/arcsec^2", "value":3.51}, "850":{"outUnit":"Jy/arcsec^2", "value":1.95}},\
+                                 "Planck":{"857":{"outUnit":"MJy/sr", "value":2.27}, "545":{"outUnit":"MJy/sr", "value":58.04},\
+                                           "353":{"outUnit":"MJy/sr", "value":287.450}, "217":{"outUnit":"MJy/sr", "value":483.690},\
+                                           "143":{"outUnit":"MJy/sr", "value":371.74}, "100":{"outUnit":"MJy/sr", "value":244.1}}} 
+        
+        if instrument is not None and band is not None:
+            return instrumentConversions[instrument][band]["outUnit"], instrumentConversions[instrument][band]["value"]
+        else:
+            raise Exception("Unable to provide instrumental unit, module error - report")
+        
+    ###############################################################################################################
+    
+    def programmedUnits(self, SBinfo=False):
+        # function to return dictionary of programmed units and groups
+        
+        # list of programmed units (grouped by just syntax differences)
+        units = {"other":["pW", "K_CMB"],\
+                 "Jy/arcsec^2":["Jy/arcsec^2", "Jy arcsec^-2", "Jy arcsec-2", "Jy arcsec**-2"],\
+                 "mJy/arcsec^2":["mJy/arcsec^2", "mJy arcsec^-2", "mJy arcsec-2", "mJy/arcsec**2"], \
+                 "MJy/sr":["MJy/sr", "MJy per sr", "MJy sr^-1", "MJy sr-1", "MJy sr**-1"],\
+                 "Jy/beam":["Jy/beam", "Jy beam^-1", "Jy beam-1", "Jy beam**-1"],\
+                 "mJy/beam":["mJy/beam", "mJy beam^-1", "mJy beam-1", "mJy beam**-1"],\
+                 "Jy/pix":["Jy/pix", "Jy pix^-1", "Jy pix-1", "Jy pix**-1", "Jy/pixel", "Jy pixel^-1", "Jy pixel-1", "Jy pixel**-1"],\
+                 "mJy/pix":["mJy/pix", "mJy pix^-1", "mJy pix-1", "mJy pix**-1", "mJy pixel^-1", "mJy pixel-1", "mJy pixel**-1"]}
+        
+        # is the unit surface brightness or not
+        if SBinfo:
+            masterGroupSB = {"other":True, "Jy/arcsec^2":True, "mJy/arcsec^2":True, "MJy/sr":True, "Jy/beam":True, "mJy/beam":True,\
+                             "Jy/pix":False, "mJy/pix":False}
+            SBunits = {}
+            for unitClass in units:
+                for unit in units[unitClass]:
+                    SBunits[unit] = masterGroupSB[unitClass]
+        
+        if SBinfo:
+            return units, SBunits
+        else:
+            return units
+    
+    
+    ###############################################################################################################
+    ###############################################################################################################
+    ###############################################################################################################
+    
     
     def deleteWCSheaders(self):
         # function to remove headers involved in providing the WCS, so can update keywords with new header from WCS.to_header
@@ -343,7 +463,8 @@ class astroImage(object):
                             pass
         
         return
-        
+
+    ###############################################################################################################    
     
     def getPixelScale(self):
         # function to get pixel size
@@ -354,6 +475,7 @@ class astroImage(object):
         self.pixSize = round(pixSizes[0], 6) * u.arcsecond
         return round(pixSizes[0], 6)
     
+    ###############################################################################################################
         
     def background_sigmaClip(self, snr=2, npixels=5, dilate_size=11, sigClip=3.0, iterations=20, maskMatch=None, apply=False):
         # function to get background level and noise
@@ -376,6 +498,7 @@ class astroImage(object):
         
         return mask
     
+    ###############################################################################################################
     
     def constantBackSub(self, backConstant):
         # function to subtract a constant from the image
@@ -385,6 +508,7 @@ class astroImage(object):
         
         return
     
+    ###############################################################################################################
     
     def ellipticalAnnulusBackSub(self, centre, inner=None, outer=None, axisRatio=None, PA=None, outerCircle=False, backNoise=False,\
                                method='exact', subpixels=None, maskNaN=True, apply=False):
@@ -564,7 +688,8 @@ class astroImage(object):
         else:
             return backValue
         
-        
+    ###############################################################################################################
+
     def circularAnnulusBackSub(self, centre, inner=None, outer=None, backNoise=False,\
                                method='exact', subpixels=None, maskNaN=True, apply=False):
         
@@ -582,6 +707,7 @@ class astroImage(object):
         else:
             return backValue
     
+    ###############################################################################################################
     
     def circularAperture(self, galInfo, radius=None, multiRadius = False, localBackSubtract=None, names=None, method='exact', subpixels=None, backMedian=False, maskNaN = True, error=None):
         # function to perform circular aperture photometry 
@@ -651,12 +777,12 @@ class astroImage(object):
                 raise ValueError("List of background outer radius values is not same length as list of centres")
         
         
-    
         # perform aperture photometry
         phot_table = self.aperturePhotometry(mode, centres, radius, multiRadius=multiRadius, localBackSubtract=localBackSubtract, names=names, method=method, subpixels=subpixels, backMedian=backMedian, maskNaN=maskNaN, error=error)
     
         return phot_table
     
+    ###############################################################################################################
     
     def ellipticalAperture(self, galInfo, major=None, minor=None, axisRatio=None, PA=None, multiRadius = False, localBackSubtract=None, names=None, method='exact', subpixels=None, backMedian=False, maskNaN = True, error=None):
         # function to perform circular aperture photometry 
@@ -834,11 +960,11 @@ class astroImage(object):
 
             self.surfaceBrightness(phot_table, halfbin_phot_table)
 
-            print("here")
-            
+            print("here")    
     
         return phot_table   
 
+    ###############################################################################################################
 
     def rectangularAperture(self, galInfo, length=None, width=None, ratio=None, PA=None, multiRadius = False, localBackSubtract=None, names=None, method='exact', subpixels=None, backMedian=False, maskNaN = True, error=None):
         # function to perform circular aperture photometry 
@@ -1006,7 +1132,8 @@ class astroImage(object):
     
         return phot_table
     
-    
+    ###############################################################################################################
+
     def aperturePhotometry(self, mode, centres, radius, minor=None, PA=None, multiRadius = False, localBackSubtract=None, names=None, method='exact', subpixels=None, backMedian=False, maskNaN=True, error=None):
         # function to perform photometry
         
@@ -1599,6 +1726,8 @@ class astroImage(object):
         
         return phot_table
     
+    ###############################################################################################################
+
     def halfBinArrays(self, radArray):
         # function which calculates halfway bins for surface brightness function
         
@@ -1656,7 +1785,9 @@ class astroImage(object):
                 outBins = halfBins
         
         return outBins
-                
+
+    ###############################################################################################################
+
     def surfaceBrightness(self, phot_table, half_bin_table):
         # function to calculate surface brightness profiles
         
@@ -1729,7 +1860,8 @@ class astroImage(object):
                phot_table[objName+"_surface_brightness_error"] = surfaceBrightness
                phot_table[objName+"_surface_brightness_error"].unit = self.unit + " arcsec^-2" 
             
-        
+    ###############################################################################################################
+
     def coordMaps(self):
         # function to find ra and dec co-ordinates of every pixel
         
@@ -1780,6 +1912,8 @@ class astroImage(object):
         
         return
     
+    ###############################################################################################################
+
     def pixelRadius(self, coordinate, major=None, minor=None, axisRatio=None, inclin=None, PA=None):
         
         # create blank radius map
@@ -1886,77 +2020,28 @@ class astroImage(object):
         # return radius map
         return radMap
         
-    
-    def standardBeamAreas(self, instrument=None, band=None):
-        # define standard beam areas
-        beamAreas = {"SCUBA-2":{"450":141.713*u.arcsecond**2., "850":246.729*u.arcsecond**2.}, "SPIRE":{"250":469.4*u.arcsecond**2., "350":831.3*u.arcsecond**2., "500":1804.3*u.arcsecond**2.},\
-                     "Planck":{"353":96170.4*u.arcsecond**2.}, "SCUBA-2&Planck":{"850":246.729*u.arcsecond**2.}, "SCUBA-2&SPIRE":{"450":141.713*u.arcsecond**2.}}
-        if instrument is not None:
-            return beamAreas[instrument][band]
-        else:
-            return beamAreas
-    
-    def standardCentralWavelengths(self, instrument=None, band=None):
-        # define central wavelengths for bands in micron
-        centralWavelengths = {"SCUBA-2":{"450":450.0*u.micron, "850":850.0*u.micron}, 
-                              "SPIRE":{"250":250.0*u.micron, "350":350.0*u.micron, "500":500.0*u.micron},\
-                              "PACS":{"70":70.0*u.micron, "100":100*u.micron, "160":160.0*u.micron},\
-                              "Planck":{"353":850.0*u.micron}}
-        if instrument is not None:
-            return centralWavelengths[instrument][band]
-        else:
-            return centralWavelengths
-    
-    def standardFWHM(self, instrument=None, band=None):
-        # define central wavelengths for bands in micron
-        FWHMs = {"SCUBA-2":{"450":7.9*u.arcsecond, "850":13.0*u.arcsecond},\
-                 "SPIRE":{"250":17.6*u.arcsecond, "350":23.9*u.arcsecond, "500":35.2*u.arcsecond},\
-                 "Planck":{"353":289.08*u.arcsecond}}
-        if instrument is not None:
-            return FWHMs[instrument][band]
-        else:
-            return FWHMs
-    
-    def programmedUnits(self, SBinfo=False):
-        # function to return dictionary of programmed units and groups
-        
-        # list of programmed units (grouped by just syntax differences)
-        units = {"other":["pW", "K_CMB"],\
-                 "Jy/arcsec^2":["Jy/arcsec^2", "Jy arcsec^-2", "Jy arcsec-2", "Jy arcsec**-2"],\
-                 "mJy/arcsec^2":["mJy/arcsec^2", "mJy arcsec^-2", "mJy arcsec-2", "mJy/arcsec**2"], \
-                 "MJy/sr":["MJy/sr", "MJy per sr", "MJy sr^-1", "MJy sr-1", "MJy sr**-1"],\
-                 "Jy/beam":["Jy/beam", "Jy beam^-1", "Jy beam-1", "Jy beam**-1"],\
-                 "mJy/beam":["mJy/beam", "mJy beam^-1", "mJy beam-1", "mJy beam**-1"],\
-                 "Jy/pix":["Jy/pix", "Jy pix^-1", "Jy pix-1", "Jy pix**-1", "Jy/pixel", "Jy pixel^-1", "Jy pixel-1", "Jy pixel**-1"],\
-                 "mJy/pix":["mJy/pix", "mJy pix^-1", "mJy pix-1", "mJy pix**-1", "mJy pixel^-1", "mJy pixel-1", "mJy pixel**-1"]}
-        
-        # is the unit surface brightness or not
-        if SBinfo:
-            masterGroupSB = {"other":True, "Jy/arcsec^2":True, "mJy/arcsec^2":True, "MJy/sr":True, "Jy/beam":True, "mJy/beam":True,\
-                             "Jy/pix":False, "mJy/pix":False}
-            SBunits = {}
-            for unitClass in units:
-                for unit in units[unitClass]:
-                    SBunits[unit] = masterGroupSB[unitClass]
-        
-        if SBinfo:
-            return units, SBunits
-        else:
-            return units
-        
-    
+    ###############################################################################################################
+
     def convertUnits(self, newUnit, conversion=None, beamArea=None, verbose=True):
         # function to convert units of map
         
         # if a conversion value given use that, if not calculate
         if conversion is not None:
             self.image = self.image * conversion
+            if hasattr(self,'error'):
+                self.error = self.error * instConvValue
             self.header['BUNIT'] = newUnit
             self.unit = newUnit
             if "SIGUNIT" in self.header:
                 self.header['SIGUNIT'] = newUnit
             if "ZUNITS" in self.header:
                 self.header['ZUNITS'] = newUnit
+            
+            if hasattr(self, "bkgMedian"):
+                self.bkgMedian = self.bkgMedian * conversion
+            if hasattr(self, "bkgStd"):
+                self.bkgMedian = self.bkgStd * conversion
+
             if verbose:
                 print(self.band, " image converted to ", newUnit, " using provided conversion")
         else:
@@ -2004,31 +2089,28 @@ class astroImage(object):
                     if verbose:
                         print("Image Unit: ", newUnit, " not programmed - result maybe unreliable")
                 
-                # check if SCUBA-2 instrument units of pW and if so convert first to Jy/arcsec^2
-                if self.instrument == "SCUBA-2" and self.header['BUNIT'] == 'pW':
-                    if newUnit == 'Jy/beam':
-                        self.image = self.image * scubaConversions[self.band]['Jy/beam']
-                        self.header['BUNIT'] = 'Jy/beam'
-                        oldUnit = 'Jy/beam'
-                    else:
-                        self.image = self.image * scubaConversions['Jy/arcsec^2']
-                        self.header['BUNIT'] = 'Jy/arcsec^2'
-                        oldUnit = 'Jy/arcsec^2'
+                # check if the image is default instrumental units rather than an astronomical unit
+                if standardInstrumentalUnit(self.instrument, self.header['BUNIT']):
+                    # get conversion value 
+                    instConvUnit, insConvValue = standardInstrumentConversion(self.instrument, self.band)
+                    
+                    # apply changes to image
+                    self.image = self.image * instConvValue
+                    if hasattr(self,'error'):
+                        self.error = self.error * instConvValue
+                    self.header['BUNIT'] = instConvUnit
+                    self.unit = instConvUnit
+                    oldUnit = instConvUnit
+                    
+                    if hasattr(self, "bkgMedian"):
+                        self.bkgMedian = self.bkgMedian * instConvValue
+                    if hasattr(self, "bkgStd"):
+                        self.bkgMedian = self.bkgStd * instConvValue
+
                     if oldUnit == newUnit:
                         if verbose:
-                            print("Image converted to ", newUnit)
+                           print("Image converted to ", newUnit)
                         return
-                elif self.header['BUNIT'] == 'pW':
-                    raise ValueError("Can only process pW from SCUBA-2")
-                
-                # check if Planck instruments in unit of K_CMB
-                if self.instrument == "Planck" and self.header['BUNIT'] == "K_CMB":
-                    self.image = self.image * planckConversion[self.band]
-                    self.header['BUNIT'] = "MJy/sr"
-                    self.unit = "MJy/sr"
-                    oldUnit = "MJy/sr"
-                elif self.header['BUNIT'] == "K_CMB":
-                    raise ValueError("Can only process K_CMB from Planck")
                 
                 ### process the old units
                 if oldUnit in units["Jy/pix"]:
@@ -2084,7 +2166,11 @@ class astroImage(object):
                 else:
                     raise ValueError("Unit not programmed")
                 
+
                 self.image = self.image * conversion
+                if hasattr(self,'error'):
+                    self.error = self.error * conversion
+
                 self.header['BUNIT'] = newUnit
                 self.unit = newUnit
                 if "SIGUNIT" in self.header:
@@ -2095,7 +2181,17 @@ class astroImage(object):
                     self.header['QTTY____'] = newUnit
                 if verbose:
                     print("Image converted to: ", newUnit)
-    
+                
+                # remove or adjust attributes which could be present
+                if hasattr(self, "bkgMedian"):
+                    self.bkgMedian = self.bkgMedian * conversion
+                if hasattr(self, "bkgStd"):
+                    self.bkgMedian = self.bkgStd * conversion
+
+        return
+
+    ###############################################################################################################
+
     def centralWaveAdjust(self, newWavelength, adjustSettings):
         # function to adjust for difference in central wavelengths
         print("Performing Central Wavelength Adjustment")
@@ -2209,7 +2305,8 @@ class astroImage(object):
             self.image = self.image * factor
             if hasattr(self,"error"):
                 self.error = self.error * factor
-        
+
+    ###############################################################################################################    
     
     def ccAdjuster(self, adjustSettings, ccValues, saveCCinfo=False):
         # function to adjust image for colour corrections
@@ -2271,7 +2368,7 @@ class astroImage(object):
         
             return ccValue
         
-        
+        ###############################################################################################################
         
         # see if have a PPMAP cube
         if "ppmapCube" in adjustSettings:
@@ -2391,6 +2488,7 @@ class astroImage(object):
             if saveCCinfo:
                 self.ccData = ccFactor
     
+    ###############################################################################################################
     
     def restoreDefaultCC(self):
         # function to restore the image to default colour-corrections
@@ -2401,9 +2499,10 @@ class astroImage(object):
         # update error
         if hasattr(self,"error"):
             self.error = self.error / self.ccData
+
+    ###############################################################################################################
     
-    
-    def reproject(self, projHead, exact=True, conserveFlux=False):
+    def reproject(self, projHead, exact=True, conserveFlux=None):
         # function to reproject the fits image
         from reproject import reproject_from_healpix, reproject_interp, reproject_exact
         
@@ -2445,10 +2544,15 @@ class astroImage(object):
         
         # create combine astro image
         repoImage = astroImage(repoHdulist, load=False, instrument=self.instrument, band=self.band)
-          
         
+        if conserveFlux is None:
+            if self.unit=="Jy/pix" or self.unit=="mJy/pix":
+                conserveFlux = True
+            else:
+                conserveFlux = False
+
         # see if need to correct image to conserve flux rather than surface brightness and correct
-        if conserveFlux or self.unit=="Jy/pix" or self.unit=="mJy/pix":
+        if conserveFlux:
             # get original pixel size
             if hasattr(self, "pixSize") is False:
                 self.getPixelScale()
@@ -2464,7 +2568,8 @@ class astroImage(object):
         # return new image
         return repoImage
     
-        
+    ###############################################################################################################
+
     def imageManipulation(self, operation, value):
         # function to manipulate fits file
         
@@ -2486,6 +2591,7 @@ class astroImage(object):
         else:
             raise ValueError("Operation not programmed")
     
+    ###############################################################################################################
     
     def convolve(self, kernel, boundary='fill', fill_value=0.0, peakNorm=False, FWHM=True):
         
@@ -2535,7 +2641,8 @@ class astroImage(object):
         
         return convolvedImage
     
-    
+    ###############################################################################################################
+
     def cutout(self, centre, size, copy=False):
         # function to create a cutout of the image
         
@@ -2583,7 +2690,8 @@ class astroImage(object):
         cutoutImage = astroImage(cutoutHdulist, load=False, instrument=self.instrument, band=self.band)
         
         return cutoutImage
-        
+
+    ###############################################################################################################    
         
     def imageFFTcombine(self, lowresImage, filterScale=None, beamArea=None, filterType="gauss", butterworthOrder=None, sigmoidScaling=None, beamMatchedMode=True):
         # function to combine this image with another
@@ -2728,111 +2836,244 @@ class astroImage(object):
         
         return combineImage
     
+    ###############################################################################################################
     
-    def plot(self, recentre=None, stretch='linear', vmin=None, vmid=None, vmax=None, cmap=None, facecolour='white', nancolour='black', hide_colourbar=False, save=None):
-        # function to make a quick plot of the data using matplotlib and aplpy
+    def getPowerSpectra(self, oneD=True, mask=None, plot=True, spatialUnits=u.deg, normaliseScale=None): 
+        # function to create power spectrum of the map
+        # based on Agpy implementation of Adam Ginsburg
         
-        # import modules
-        import aplpy
+        # import psds module
+        from astroIm import psds
+
+        if oneD is False:
+            raise Exception("Wrapper for 2D power spectrum not implemented yet")
+        
+        powerSpecImage = self.image.copy()
+    
+        # if a mask is provide set regions either 0 or false to NaN
+        if mask is not None:
+            # convert mask to int
+            intMask = mask.astype(int)
+            
+            # set image to NaN where mask == 0
+            powerSpecImage[intMask < 0.1] = np.nan
+            
+        # check pixel size is loaded
+        if hasattr(self, "pixSize") is False:
+            self.getPixelScale()
+            
+        # create power spectrum of map
+        rawFreq, psd = psds.PSD2(powerSpecImage, oned=oneD)
+        
+        # adjust scaling
+        freq = rawFreq / (self.pixSize.to(spatialUnits))
+        spatial = 1.0 / freq
+        
+        # see if want to apply a normalisation
+        if normaliseScale is not None:
+            sel = np.where(np.abs(spatial - normaliseScale.to(spatialUnits)) == (np.abs(spatial - normaliseScale.to(spatialUnits))).min())
+            psd = psd / psd[sel][0]
+        
+        # save power spectra to astroImage object
+        self.powerSpec = {"frequency":freq, "spatial":spatial, "psd":psd}
+        
+        
+        if plot:
+            self.powerSpecPlot()
+
+    ###############################################################################################################
+
+    def powerSpecPlot(self, powerSpecInfo=None, spatialUnits=None, labels=None, linestyle=None, color=None):
+        # module which plots a powerspectra
+        # import module
         import matplotlib.pyplot as plt
+        from matplotlib.ticker import FormatStrFormatter
         
-        # create figure
-        fig = plt.figure()
+        # define figure and axes
+        fig = plt.figure(figsize=(6,4))
+        f1 = plt.axes([0.15,0.12,0.8,0.76])
         
-        # repackage into an HDU 
-        hdu = pyfits.PrimaryHDU(self.image, self.header)
-        
-        # create aplpy axes
-        f1 = aplpy.FITSFigure(hdu, figure=fig)
-        
-        # if doing a log stretch find vmax, vmid, vmin
-        if stretch == "log":
-            if vmin is None or vmax is None or vmid is None:
-                # select non-NaN pixels
-                nonNAN = np.where(np.isnan(self.image) == False)
-                
-                # sort pixels
-                sortedPix = self.image[nonNAN]
-                sortedPix.sort()
-                
-                # set constants
-                minFactor = 1.0
-                brightPixCut = 5
-                brightClip = 0.9
-                midScale = 301.0
-                
-                if vmin is None:
-                    numValues = np.round(len(sortedPix) * 0.95).astype(int)
-                    vmin = -1.0 * sortedPix[:-numValues].std() * minFactor
-                
-                if vmax is None:
-                    vmax = sortedPix[-brightPixCut] * brightClip
-                
-                if vmid is None:
-                    vmid=(midScale * vmin - vmax)/100.0
-        
-        
-        # apply colourscale
-        f1.show_colorscale(stretch=stretch, cmap=cmap, vmin=vmin, vmax=vmax, vmid=vmid)
-        
-        # set nan colour to black, and face
-        f1.set_nan_color(nancolour)
-        f1.ax.set_facecolor(facecolour)
-        
-        # recentre image
-        if recentre is not None:
-            # import skycoord object
-            from astropy.coordinates import SkyCoord
-            
-            # creat flag to check if centre found
-            noCentre = False
-            
-            # get/calculate SkyCood object
-            if "coord" in recentre:
-                centreCoord = recentre["coord"]            
-            elif "RA" in recentre and "DEC" in recentre:
-                centreCoord = SkyCoord(ra=recentre['RA'], dec=recentre['DEC'], frame='icrs')
-            elif "l" in recentre and "b" in recentre:
-                centreCoord = SkyCoord(l=recentre["l"], b=recentre['b'], frame='galactic')
+        # extract data
+        if powerSpecInfo is None:
+            powerSpecData = [self.powerSpec]
+        else:
+            if isinstance(powerSpecInfo,dict) is True:
+                powerSpecData = [self.powerSpec]
+            elif isinstance(powerSpecInfo,list) is True:
+                powerSpecData = powerSpecInfo
+
+        # if spatialUnits not specified then take from first psd
+        if spatialUnits is None:
+            spatialUnits = powerSpecData[0]['spatial'].unit
+
+        # process line property information
+        for lineProp in [labels, linestyle, color]:
+            if lineProp is None:
+                lineProp = [None] * len(powerSpecData)
             else:
-                noCentre = True
-                print("Cannot recentre as no coordinate information identified")
-            
-            
-            if noCentre is False:
-                # get WCS infomation
-                WCSinfo = wcs.WCS(self.header)
-                
-                # convert to xpix and ypix
-                xpix, ypix = wcs.utils.skycoord_to_pixel(centreCoord, WCSinfo)
-                
-                # convert back to sky coordinates of image for APLpy
-                worldCoord = WCSinfo.all_pix2world([xpix],[ypix],0)
-            
-                
-                # see if radius or length/width data present 
-                if "rad" in recentre:    
-                    f1.recenter(worldCoord[0][0], worldCoord[1][0], radius=recentre['rad'].to(u.degree).value)
-                elif "radius" in recentre:
-                    f1.recenter(worldCoord[0][0], worldCoord[1][0], radius=recentre['radius'].to(u.degree).value)
-                elif "width" in recentre and "height" in recentre:
-                    f1.recenter(worldCoord[0][0], worldCoord[1][0], width=recentre['width'].to(u.degree).value, height=recentre['height'].to(u.degree).value)
+                if isinstance(labels, str) and len(powerSpecData) == 1:
+                    lineProp = [lineProp]
+                elif isinstance(labels, list) and len(powerSpecData) == len(labels):
+                    lineProp = lineProp
                 else:
-                    print("Cannot recentre as no size information identified")
+                    raise Exception(f"{lineProp} variable input is not understood")
         
-        # add colorbar
-        if hide_colourbar is False:
-            f1.add_colorbar()
-            f1.colorbar.show()
-            if hasattr(self, 'unit'):
-                f1.colorbar.set_axis_label_text(self.unit)
+        # plot data
+        for i in range(0,len(powerSpecData)):
+            f1.plot(powerSpecData[i]['frequency'], powerSpecData[i]['psd'])
+            
+        # set scales to log
+        f1.set_xscale("log")
+        f1.set_yscale("log")
+    
+        # get x-axis bounds
+        x1bound = f1.get_xbound()
+        y1bound = f1.get_ybound()
         
-        # save plot if desired
-        if save is not None:
-            plt.savefig(save)
+        # work out what ticks would be present on other axis
+        x2low = np.ceil(np.log10(1.0 / x1bound[1]))
+        x2high = np.floor(np.log10(1.0 / x1bound[0]))
+        x2ticks = 10.0**np.arange(x2low,x2high+1.0,1.0)
         
+        # work out as fraction of axis where these would lie
+        x2frac = []
+        x2label = []
+        for tick in x2ticks:
+            x2frac.append((np.log10(1.0/tick) - x1bound[0]) / (x1bound[1]-x1bound[0]))
+            x2label.append(str(tick))
+            
+        # create second axes
+        ax2 = f1.twiny()
+        ax2.set_xscale("log")
+        ax2.set_xlim(1.0/x1bound[0],1.0/x1bound[1])
+            
+        # adjust format
+        f1.xaxis.set_major_formatter(FormatStrFormatter('%.3f'))
+        ax2.xaxis.set_major_formatter(FormatStrFormatter('%.3f'))
+        f1.set_ylabel("Normalised Power (Arbitrary Units)")
+        if spatialUnits == u.deg:
+            f1.set_xlabel('Spatial Frequency (1/$^\circ$)')
+            ax2.set_xlabel('Spatial Scale ($^\circ$)')
+        elif spatialUnits == u.arcmin:
+            f1.set_xlabel("Spatial Frequency (1/')")
+            ax2.set_xlabel("Spatial Scale (')")
+        elif spatialUnits == u.arcsec:
+            f1.set_xlabel('Spatial Frequency (1/")')
+            ax2.set_xlabel('Spatial Scale (")')
+        
+        # show plot
         plt.show()
     
+        return
+        
+###############################################################################################################
+################################################################################################################        
+###############################################################################################################
+            
+def plot(self, recentre=None, stretch='linear', vmin=None, vmid=None, vmax=None, cmap=None, facecolour='white', nancolour='black', hide_colourbar=False, save=None):
+    # function to make a quick plot of the data using matplotlib and aplpy
+    
+    # import modules
+    import aplpy
+    import matplotlib.pyplot as plt
+    
+    # create figure
+    fig = plt.figure()
+    
+    # repackage into an HDU 
+    hdu = pyfits.PrimaryHDU(self.image, self.header)
+    
+    # create aplpy axes
+    f1 = aplpy.FITSFigure(hdu, figure=fig)
+    
+    # if doing a log stretch find vmax, vmid, vmin
+    if stretch == "log":
+        if vmin is None or vmax is None or vmid is None:
+            # select non-NaN pixels
+            nonNAN = np.where(np.isnan(self.image) == False)
+            
+            # sort pixels
+            sortedPix = self.image[nonNAN]
+            sortedPix.sort()
+            
+            # set constants
+            minFactor = 1.0
+            brightPixCut = 5
+            brightClip = 0.9
+            midScale = 301.0
+            
+            if vmin is None:
+                numValues = np.round(len(sortedPix) * 0.95).astype(int)
+                vmin = -1.0 * sortedPix[:-numValues].std() * minFactor
+            
+            if vmax is None:
+                vmax = sortedPix[-brightPixCut] * brightClip
+            
+            if vmid is None:
+                vmid=(midScale * vmin - vmax)/100.0
+    
+    
+    # apply colourscale
+    f1.show_colorscale(stretch=stretch, cmap=cmap, vmin=vmin, vmax=vmax, vmid=vmid)
+    
+    # set nan colour to black, and face
+    f1.set_nan_color(nancolour)
+    f1.ax.set_facecolor(facecolour)
+    
+    # recentre image
+    if recentre is not None:
+        # import skycoord object
+        from astropy.coordinates import SkyCoord
+        
+        # creat flag to check if centre found
+        noCentre = False
+        
+        # get/calculate SkyCood object
+        if "coord" in recentre:
+            centreCoord = recentre["coord"]            
+        elif "RA" in recentre and "DEC" in recentre:
+            centreCoord = SkyCoord(ra=recentre['RA'], dec=recentre['DEC'], frame='icrs')
+        elif "l" in recentre and "b" in recentre:
+            centreCoord = SkyCoord(l=recentre["l"], b=recentre['b'], frame='galactic')
+        else:
+            noCentre = True
+            print("Cannot recentre as no coordinate information identified")
+        
+        
+        if noCentre is False:
+            # get WCS infomation
+            WCSinfo = wcs.WCS(self.header)
+            
+            # convert to xpix and ypix
+            xpix, ypix = wcs.utils.skycoord_to_pixel(centreCoord, WCSinfo)
+            
+            # convert back to sky coordinates of image for APLpy
+            worldCoord = WCSinfo.all_pix2world([xpix],[ypix],0)
+        
+            
+            # see if radius or length/width data present 
+            if "rad" in recentre:    
+                f1.recenter(worldCoord[0][0], worldCoord[1][0], radius=recentre['rad'].to(u.degree).value)
+            elif "radius" in recentre:
+                f1.recenter(worldCoord[0][0], worldCoord[1][0], radius=recentre['radius'].to(u.degree).value)
+            elif "width" in recentre and "height" in recentre:
+                f1.recenter(worldCoord[0][0], worldCoord[1][0], width=recentre['width'].to(u.degree).value, height=recentre['height'].to(u.degree).value)
+            else:
+                print("Cannot recentre as no size information identified")
+    
+    # add colorbar
+    if hide_colourbar is False:
+        f1.add_colorbar()
+        f1.colorbar.show()
+        if hasattr(self, 'unit'):
+            f1.colorbar.set_axis_label_text(self.unit)
+    
+    # save plot if desired
+    if save is not None:
+        plt.savefig(save)
+    
+    plt.show()
+
     
     def saveToFits(self, outPath, overwrite=False):
         # function to save to fits
@@ -2849,221 +3090,43 @@ class astroImage(object):
         fitsHdu = pyfits.PrimaryHDU(self.image, self.header)
         
         return fitsHdu
-    
 
-# PPMAP cube class
-class ppmapCube(object):
-    
-    def __init__(self, filename, ext=0, load=True, betaValues=None, sigmaCube=None, loadSig=True, sigExt=0):
-        # load in the fits file
-        if load:
-            # load fits file
-            fits = pyfits.open(filename)
-            self.cube = fits[ext].data
-            self.header = fits[ext].header
-            fits.close()
-        else:
-            fits = filename
-            self.cube = fits[ext].data
-            self.header = fits[ext].header
-        
-        # if provided load sigma cube
-        if sigmaCube is not None:
-            if loadSig:
-                # load fits file
-                sigFits = pyfits.open(sigmaCube)
-                self.error = sigFits[sigExt].data
-                
-                # check has the same dimensions as cube
-                if self.cube.shape != self.error.shape:
-                    raise Exception("Error cube dimensions do not match signal cube.")
-                sigFits.close()
-            else:
-                sigFits = filename
-                self.error = sigFits[sigExt].data
-                
-                # check has the same dimensions as cube
-                if self.cube.shape != self.error.shape:
-                    raise Exception("Error cube dimensions do not match signal cube.")
-                
-        
-        # get number of temperature and beta bins
-        if self.cube.ndim == 4:
-            self.nTemperature = self.cube.shape[1]
-            self.nBeta = self.cube.shape[0]
-        else:
-            self.nTemperature = self.cube.shape[0]
-            self.nBeta = 1
-        
-        # calculate temperature of each bin
-        self.temperatures = 10**(np.linspace(np.log10(self.header['TMIN']),np.log10(self.header['TMAX']),self.nTemperature)) * u.K
-        
-        # see if any beta information in header
-        if "BETA01" in self.header:
-            Bvalues = np.array([])
-            for i in range(0,self.nBeta):
-                headerKey = f"BETA{i+1:02d}"
-                Bvalues = np.append(Bvalues, self.header[headerKey])
-        else:
-            if betaValues is None:
-                raise Exception("Need information on beta")
-            if isinstance(betaValues,float):
-                if self.nBeta != 1:
-                    raise Exception("Only 1 Beta value given, but multiple betas in cube")
-            else:
-                if len(betaValues) != self.nBeta:
-                    raise Exception("Provided betas does not match shape of PPMAP cube")
-                if isinstance(betaValues,list):
-                    betaValues = np.array(betaValues)
-                Bvalues = betaValues
-        self.betas = Bvalues
-        
-        # get distance from header
-        self.distance = self.header['DISTANCE'] * u.kpc
-        
-        # check image is in standard PPMAP units
-        if self.header['BUNIT'] != "10^20 cm^-2":
-            raise Exception("Not Programmed to handle different units")
-        
-        # add the correct units to the cube
-        self.cube = self.cube * u.cm**-2.0
-        
-        # convert the cube to something more useful
-        self.cube = self.cube * 1.0e20 * 2.8 * con.u  # mass per cm^-2
-        self.cube = self.cube.to(u.Msun * u.pc**-2.0) # solar mass per parsec^2
-        
-        # have to also convert the error cube if loaded
-        if hasattr(self,'error'):
-             self.error = self.error * u.cm**-2.0
-             self.error = self.error * 1.0e20 * 2.8 * con.u
-             self.error = self.error.to(u.Msun * u.pc**-2.0)
-        
-    # define method to get pixel sizes 
-    def getPixelScale(self):
-        # function to get pixel size
-        WCSinfo = wcs.WCS(self.header)
-        pixSizes = wcs.utils.proj_plane_pixel_scales(WCSinfo)*3600.0
-        if np.abs(pixSizes[0]-pixSizes[1]) > 0.0001:
-            raise ValueError("PANIC - program does not cope with non-square pixels")
-        self.pixSize = round(pixSizes[0], 6) * u.arcsecond
-        return round(pixSizes[0], 6)
-    
-    # define method to mask cube to total column density above S/N threshold
-    def totalSNcut(self, sigToNoise=5.0):
-        if hasattr(self,'error') is False:
-            raise Exception("To perform S/N cut, need to have loaded error cube")
-        print("RUNNING TEST")
-        # sum the column density over all temperatures and betas
-        if self.cube.ndim == 4:
-            totalCD = np.sum(self.cube, axis=(0,1))
-        else:
-            totalCD = np.sum(self.cube, axis=(0))
-        
-        # calculate total error
-        if self.cube.ndim == 4:
-            totalCDerr =  np.sqrt(np.sum(self.error**2.0, axis=(0,1)))
-        else:
-            totalCDerr =  np.sqrt(np.sum(self.error**2.0, axis=(0)))
-        
-        # find where above threshold
-        sel = np.where(totalCD / totalCDerr < sigToNoise)
-        
-        # change slices that do not correspond to nan's
-        if self.cube.ndim == 4:
-            self.cube[:,:,sel[0],sel[1]] = np.nan
-            self.error[:,:,sel[0],sel[1]] = np.nan
-        else:
-            self.cube[:,sel[0],sel[1]] = np.nan
-            self.error[:,sel[0],sel[1]] = np.nan
-        
-        
-    # define method to mask individual channels based on S/N threshold
-    def channelSNcut(self, sigToNoise=5.0):
-        if hasattr(self,'error') is False:
-            raise Exception("To perform S/N cut, need to have loaded error cube")
-        
-        
-        # find where above threshold
-        sel = np.where(self.cube / self.error < sigToNoise)
-        
-        # modify values in object
-        self.cube[sel] = np.nan
-        self.error[sel] = np.nan
-    
-    
-    # define function to create an artificial image
-    def artificialImage(self, wavelength, tau, tauWavelength, ccVals=None):
-        
-        # see if found pixel size, otherwise do it now
-        if hasattr(self, 'pixSize') is False:
-            self.getPixelScale()
-        
-        # if no cc values provided pass an array of ones
-        if ccVals is None:
-            ccVals = np.ones((self.nBeta, self.nTemperature))
-        
-        # change to mass per pixel
-        massCube = self.cube * (self.distance * np.tan(self.pixSize))**2.0
-        
-        # create emission map
-        emission = np.zeros((massCube.shape[-2], massCube.shape[-1]))
-        
-        # convert wavlength to frequency
-        frequency = con.c / wavelength
-        
-        # convert rest wavelength to frequency
-        refFrequency = con.c / tauWavelength
-        
-        # create mask to see if all pixels were nan's
-        mask = np.zeros(emission.shape)
-        
-        # loop over every beta value
-        for i in range(0,self.nBeta):
-            for j in range(0,self.nTemperature):
-                if massCube.ndim == 4:
-                    slice = massCube[i,j,:,:] * ccVals[i,j]
-                else:
-                    slice = massCube[j,:,:] * ccVals[i,j]
-                
-                # set any nan pixels to zero
-                nanSel = np.where(np.isnan(slice) == True)
-                nonNaNSel = np.where(np.isnan(slice) == False)
-                slice[nanSel] = 0.0
-                
-                # add slice to total emission
-                blackbody = blackbody_nu(temperature=self.temperatures[j])
-                emission = emission + slice * tau * (frequency / refFrequency)**self.betas[i] *  blackbody(frequency) / self.distance**2.0 * u.sr
-        
-                # add if non-nan value to adjust mask
-                mask[nonNaNSel] = 1
-                
-        
-        # if all channels in slice are nan restore nan's to emission map
-        maskSel = np.where(mask < 0.5)
-        emission[maskSel] = np.nan
-        
-        # convert emission map to Jy per arcsec^2
-        emission = emission.to(u.Jy) / (self.pixSize)**2.0
-        
-        # make new 2D header
-        outHeader = self.header.copy()
-        outHeader['NAXIS'] = 2
-        outHeader["i_naxis"] = 2
-        del(outHeader['NAXIS3'])
-        if self.cube.ndim == 4:
-            del(outHeader['NAXIS4'])
-        # add unit to header
-        outHeader['BUNIT'] = "Jy/arcsec^2"
-        # add wavelength to header
-        outHeader['WAVELNTH'] = (wavelength.to(u.um).value, "Wavelength in Microns")
-        
-        # make astro image object from 
-        fitsHdu = pyfits.PrimaryHDU(emission.value, outHeader)
-        fitsHduList = pyfits.HDUList([fitsHdu])
-        artificialImage = astroImage(fitsHduList, load=False, instrument='PPMAP')
-        
-        return artificialImage
+##############################################################################################################
 
+# define function to plot multiple power spectra
+def multiPowerSpectraPlot(images, units=None, matchProjection=False, refImage=0, oneD=True, mask=None, spatialUnits=u.deg, normaliseScale=None, labels=None, linestyle=None, color=None):
+    # function to plot multiple power spctra on one plot
+
+    ### apply image pre-processing
+    # convert units
+    if units is not None:
+        for imageObj in images:
+            imageObj.convertUnits(units)
+    
+    # see if need to reproject
+    if matchProjection:
+        # extract reference header
+        refHead = images[refImage].header
+
+        # loop over each image and reproject
+        for i in range(0,len(images)):
+            # skip reference image
+            if i == refImage:
+                continue
+
+            # reproject
+            images[i].reproject(refHead)
+
+    # perform powerspectra calculations
+    for imageObj in images:
+        imageObj.getPowerSpectra(spatialUnits=spatialUnits, normaliseScale=normaliseScale, oneD=oneD, mask=mask, plot=False)
+
+    # create plot
+    images[0].powerSpecPlot(powerSpecInfo=[imageObj.powerSpec for imageObj in images], spatialUnits=spatialUnits, labels=labels, linestyle=linestyle, color=color)
+
+    return
+
+###############################################################################################################
 
 # create function which loads in colour-corrections
 def loadColourCorrect(colFile, SPIREtype):
@@ -3112,4 +3175,3 @@ def loadColourCorrect(colFile, SPIREtype):
     
     # return colour correction information
     return newCCinfo
-    
