@@ -904,7 +904,7 @@ class astroImage(object):
         if minor is None and axisRatio is not None:
             if isinstance(major, (list,tuple)) and isinstance(axisRatio,(list,tuple)):
                 minor = []
-                for i in range(0,len(radius)):
+                for i in range(0,len(major)):
                     minor.append(major[i] * axisRatio[i])
             elif isinstance(major,(list,tuple)) and isinstance(axisRatio,(list,tuple)) is False:
                 minor = []
@@ -1088,7 +1088,7 @@ class astroImage(object):
         if minor is None and ratio is not None:
             if isinstance(major, (list,tuple)) and isinstance(ratio,(list,tuple)):
                 minor = []
-                for i in range(0,len(radius)):
+                for i in range(0,len(ratio)):
                     minor.append(major[i] * ratio[i])
             elif isinstance(major,(list,tuple)) and isinstance(ratio,(list,tuple)) is False:
                 minor = []
@@ -1467,7 +1467,7 @@ class astroImage(object):
                                     backgroundRatio = minorRad/rad
                             
                             if mode == "circle":
-                                backApertures.append(CicularAnnulus(centres[i], r_in=backRadInfo['inner'], r_out=backRadInfo['outer']))
+                                backApertures.append(CircularAnnulus(centres[i], r_in=backRadInfo['inner'], r_out=backRadInfo['outer']))
                             elif mode == "ellipse":
                                 if backRadInfo["outerCircle"]:
                                     backApertures.append(EllipticalAnnulus(centres[i], backRadInfo["inner"], backRadInfo["outer"], backRadInfo["outer"], b_in=backRadInfo["inner"]*backgroundRatio, theta=apPA.to(u.radian).value))
@@ -1972,16 +1972,16 @@ class astroImage(object):
                 inclin = inclin * u.deg
             inclin = inclin.to(u.rad)
         elif axisRatio is not None:
-            inclin = numpy.arccos(axisRatio)
+            inclin = np.arccos(axisRatio)
         elif major is not None and minor is not None:
             if isinstance(major, u.Quantity) and isinstance(minor, u.Quantity):
-                inclin = numpy.arccos((minor/major).value)
+                inclin = np.arccos((minor/major).value)
             elif isinstance(major, u.Quantity) and isinstance(minor, u.Quantity) is False:
                 raise Exception("Major is provided as a quantity, but minor is a value")
             elif isinstance(major, u.Quantity) is False and isinstance(minor, u.Quantity):
                 raise Exception("Minor is provided as a quantity, but major is a value")
             else:
-                inclin = numpy.arccos(minor/major)
+                inclin = np.arccos(minor/major)
         elif major is not None or minor is not None:
             raise Exception("Only one of major or minor is specified")
         else:
@@ -2039,7 +2039,7 @@ class astroImage(object):
         if conversion is not None:
             self.image = self.image * conversion
             if hasattr(self,'error'):
-                self.error = self.error * instConvValue
+                self.error = self.error * conversion
             self.header['BUNIT'] = newUnit
             self.unit = newUnit
             if "SIGUNIT" in self.header:
@@ -2100,9 +2100,9 @@ class astroImage(object):
                         print("Image Unit: ", newUnit, " not programmed - result maybe unreliable")
                 
                 # check if the image is default instrumental units rather than an astronomical unit
-                if standardInstrumentalUnit(self.instrument, self.header['BUNIT']):
+                if self.standardInstrumentalUnit(self.instrument, self.header['BUNIT']):
                     # get conversion value 
-                    instConvUnit, insConvValue = standardInstrumentConversion(self.instrument, self.band)
+                    instConvUnit, instConvValue = self.standardInstrumentConversion(self.instrument, self.band)
                     
                     # apply changes to image
                     self.image = self.image * instConvValue
@@ -2206,6 +2206,9 @@ class astroImage(object):
         # function to adjust for difference in central wavelengths
         print("Performing Central Wavelength Adjustment")
         
+        # import PPMAP cube
+        import ppmapCube
+
         # get current central wavelength
         currentWavelength = self.standardCentralWavelengths(instrument=self.instrument, band=self.band)
         
@@ -2322,6 +2325,9 @@ class astroImage(object):
         # function to adjust image for colour corrections
         print("Performing Colour Correction Adjustment")
         
+        # import ppmap cube
+        import ppmapCube
+
         # define function that gets cc value for beta/temperature combination
         def ccValueFind(temperature, beta, ccInfo):
             Tgrid = ccInfo["temperatures"]
@@ -2485,7 +2491,7 @@ class astroImage(object):
             
             self.image = self.image * ccMap.image
             if hasattr(self,"error"):
-                self.error = self.error * ratioMap.image
+                self.error = self.error * ccMap.image
             
             if saveCCinfo:
                 self.ccData = ccMap.image
