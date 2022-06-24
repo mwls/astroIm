@@ -33,7 +33,7 @@ import pickle
 class astroImage(object):
     
     
-    def __init__(self, filename, ext=0, telescope=None, instrument=None, band=None, unit=None, load=True, FWHM=None, slices=None, dustpediaHeaderCorrect=False, verbose=True):
+    def __init__(self, filename, ext=0, telescope=None, instrument=None, band=None, unit=None, load=True, FWHM=None, slices=None, dustpediaHeaderCorrect=None, verbose=True):
         if load:
             # load fits file
             fits = pyfits.open(filename)
@@ -129,10 +129,20 @@ class astroImage(object):
                 raise Exception("Less than 2 spatial axis discovered")
         
         
-        
-        # correct dustpedia header 
+        # try and identify if dustpedia file
+        if dustpediaHeaderCorrect is None:
+            # try to automatically detect if dustpedia image with issue
+            try:
+                if self.header['COORDSYS'].count("/") > 0 and self.header['SIGUNIT'].count("/") > 0:
+                    dustpediaHeaderCorrect = True
+                else:
+                    dustpediaHeaderCorrect = False
+            except:
+                dustpediaHeaderCorrect = False
+
+        # correct dustpedia header
         if dustpediaHeaderCorrect:
-            keywordAdjust = ["COORDSYS", "SIGUNIT", "TELESCOP", "INSTRMNT", "DETECTOR", "WVLNGTH", "HIPE_CAL"]
+            keywordAdjust = ["COORDSYS", "SIGUNIT", "TELESCOP", "INSTRMNT", "DETECTOR", "WVLNGTH", "HIPE_CAL", "TARGET"]
             for keyword in keywordAdjust:
                 if keyword in self.header:
                     info = self.header[keyword].split("/")
