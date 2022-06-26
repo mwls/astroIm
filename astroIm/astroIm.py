@@ -968,9 +968,7 @@ class astroImage(object):
             # run photometry in these values
             halfbin_phot_table = self.aperturePhotometry(mode, centres, halfMajor, minor=halfMinor, PA=PA, multiRadius=multiRadius, localBackSubtract=localBackSubtract, names=names, method=method, subpixels=subpixels, backMedian=backMedian, maskNaN=maskNaN, error=error)
 
-            self.surfaceBrightness(phot_table, halfbin_phot_table)
-
-            print("here")    
+            self.surfaceBrightness(phot_table, halfbin_phot_table)  
     
         return phot_table   
 
@@ -1808,8 +1806,8 @@ class astroImage(object):
             if colname[-12:] == "aperture_sum":
                 objNames.append(colname[:-13])
                 surfaceBrightnessUnits = False
-            if colname[-12:] == "aperture_mean":
-                objNames.append(colname[:-13])
+            if colname[-13:] == "aperture_mean":
+                objNames.append(colname[:-14])
                 surfaceBrightnessUnits = True
         
         # see if can get pixel area otherwise do in units of per pixel
@@ -1865,11 +1863,23 @@ class astroImage(object):
              
             # add surface brightness to the table
             phot_table[objName+"_surface_brightness"] = surfaceBrightness
-            phot_table[objName+"_surface_brightness"].unit = self.unit + " arcsec^-2"
             if objName + "_aperture_error" in colnames or objName + "_aperture_mean_error" in colnames:
-               phot_table[objName+"_surface_brightness_error"] = surfaceBrightness
-               phot_table[objName+"_surface_brightness_error"].unit = self.unit + " arcsec^-2" 
-            
+               phot_table[objName+"_surface_brightness_error"] = surfaceBrightness 
+            if hasattr(self, 'unit'):
+                if surfaceBrightnessUnits:
+                    apUnit = phot_table[objName+"_aperture_mean"].unit
+                else:
+                    apUnit = phot_table[objName+"_aperture_sum"].unit
+                phot_table[objName+"_surface_brightness"].unit = str(apUnit) + " arcsec^-2"
+                if objName + "_aperture_error" in colnames or objName + "_aperture_mean_error" in colnames:
+                    if surfaceBrightnessUnits:
+                        errUnit = phot_table[objName+"_aperture_mean_error"].unit
+                    else:
+                        errUnit = phot_table[objName+"_aperture_error"].unit
+                    phot_table[objName+"_surface_brightness_error"].unit = str(errUnit) + " arcsec^-2"
+
+        return
+
     ###############################################################################################################
 
     def coordMaps(self):
@@ -2983,112 +2993,110 @@ class astroImage(object):
         return
         
 ###############################################################################################################
-################################################################################################################        
-###############################################################################################################
             
-def plot(self, recentre=None, stretch='linear', vmin=None, vmid=None, vmax=None, cmap=None, facecolour='white', nancolour='black', hide_colourbar=False, save=None):
-    # function to make a quick plot of the data using matplotlib and aplpy
-    
-    # import modules
-    import aplpy
-    import matplotlib.pyplot as plt
-    
-    # create figure
-    fig = plt.figure()
-    
-    # repackage into an HDU 
-    hdu = pyfits.PrimaryHDU(self.image, self.header)
-    
-    # create aplpy axes
-    f1 = aplpy.FITSFigure(hdu, figure=fig)
-    
-    # if doing a log stretch find vmax, vmid, vmin
-    if stretch == "log":
-        if vmin is None or vmax is None or vmid is None:
-            # select non-NaN pixels
-            nonNAN = np.where(np.isnan(self.image) == False)
-            
-            # sort pixels
-            sortedPix = self.image[nonNAN]
-            sortedPix.sort()
-            
-            # set constants
-            minFactor = 1.0
-            brightPixCut = 5
-            brightClip = 0.9
-            midScale = 301.0
-            
-            if vmin is None:
-                numValues = np.round(len(sortedPix) * 0.95).astype(int)
-                vmin = -1.0 * sortedPix[:-numValues].std() * minFactor
-            
-            if vmax is None:
-                vmax = sortedPix[-brightPixCut] * brightClip
-            
-            if vmid is None:
-                vmid=(midScale * vmin - vmax)/100.0
-    
-    
-    # apply colourscale
-    f1.show_colorscale(stretch=stretch, cmap=cmap, vmin=vmin, vmax=vmax, vmid=vmid)
-    
-    # set nan colour to black, and face
-    f1.set_nan_color(nancolour)
-    f1.ax.set_facecolor(facecolour)
-    
-    # recentre image
-    if recentre is not None:
-        # import skycoord object
-        from astropy.coordinates import SkyCoord
+    def plot(self, recentre=None, stretch='linear', vmin=None, vmid=None, vmax=None, cmap=None, facecolour='white', nancolour='black', hide_colourbar=False, save=None):
+        # function to make a quick plot of the data using matplotlib and aplpy
         
-        # creat flag to check if centre found
-        noCentre = False
+        # import modules
+        import aplpy
+        import matplotlib.pyplot as plt
         
-        # get/calculate SkyCood object
-        if "coord" in recentre:
-            centreCoord = recentre["coord"]            
-        elif "RA" in recentre and "DEC" in recentre:
-            centreCoord = SkyCoord(ra=recentre['RA'], dec=recentre['DEC'], frame='icrs')
-        elif "l" in recentre and "b" in recentre:
-            centreCoord = SkyCoord(l=recentre["l"], b=recentre['b'], frame='galactic')
-        else:
-            noCentre = True
-            print("Cannot recentre as no coordinate information identified")
+        # create figure
+        fig = plt.figure()
+        
+        # repackage into an HDU 
+        hdu = pyfits.PrimaryHDU(self.image, self.header)
+        
+        # create aplpy axes
+        f1 = aplpy.FITSFigure(hdu, figure=fig)
+        
+        # if doing a log stretch find vmax, vmid, vmin
+        if stretch == "log":
+            if vmin is None or vmax is None or vmid is None:
+                # select non-NaN pixels
+                nonNAN = np.where(np.isnan(self.image) == False)
+                
+                # sort pixels
+                sortedPix = self.image[nonNAN]
+                sortedPix.sort()
+                
+                # set constants
+                minFactor = 1.0
+                brightPixCut = 5
+                brightClip = 0.9
+                midScale = 301.0
+                
+                if vmin is None:
+                    numValues = np.round(len(sortedPix) * 0.95).astype(int)
+                    vmin = -1.0 * sortedPix[:-numValues].std() * minFactor
+                
+                if vmax is None:
+                    vmax = sortedPix[-brightPixCut] * brightClip
+                
+                if vmid is None:
+                    vmid=(midScale * vmin - vmax)/100.0
         
         
-        if noCentre is False:
-            # get WCS infomation
-            WCSinfo = wcs.WCS(self.header)
-            
-            # convert to xpix and ypix
-            xpix, ypix = wcs.utils.skycoord_to_pixel(centreCoord, WCSinfo)
-            
-            # convert back to sky coordinates of image for APLpy
-            worldCoord = WCSinfo.all_pix2world([xpix],[ypix],0)
+        # apply colourscale
+        f1.show_colorscale(stretch=stretch, cmap=cmap, vmin=vmin, vmax=vmax, vmid=vmid)
         
+        # set nan colour to black, and face
+        f1.set_nan_color(nancolour)
+        f1.ax.set_facecolor(facecolour)
+        
+        # recentre image
+        if recentre is not None:
+            # import skycoord object
+            from astropy.coordinates import SkyCoord
             
-            # see if radius or length/width data present 
-            if "rad" in recentre:    
-                f1.recenter(worldCoord[0][0], worldCoord[1][0], radius=recentre['rad'].to(u.degree).value)
-            elif "radius" in recentre:
-                f1.recenter(worldCoord[0][0], worldCoord[1][0], radius=recentre['radius'].to(u.degree).value)
-            elif "width" in recentre and "height" in recentre:
-                f1.recenter(worldCoord[0][0], worldCoord[1][0], width=recentre['width'].to(u.degree).value, height=recentre['height'].to(u.degree).value)
+            # creat flag to check if centre found
+            noCentre = False
+            
+            # get/calculate SkyCood object
+            if "coord" in recentre:
+                centreCoord = recentre["coord"]            
+            elif "RA" in recentre and "DEC" in recentre:
+                centreCoord = SkyCoord(ra=recentre['RA'], dec=recentre['DEC'], frame='icrs')
+            elif "l" in recentre and "b" in recentre:
+                centreCoord = SkyCoord(l=recentre["l"], b=recentre['b'], frame='galactic')
             else:
-                print("Cannot recentre as no size information identified")
-    
-    # add colorbar
-    if hide_colourbar is False:
-        f1.add_colorbar()
-        f1.colorbar.show()
-        if hasattr(self, 'unit'):
-            f1.colorbar.set_axis_label_text(self.unit)
-    
-    # save plot if desired
-    if save is not None:
-        plt.savefig(save)
-    
-    plt.show()
+                noCentre = True
+                print("Cannot recentre as no coordinate information identified")
+            
+            
+            if noCentre is False:
+                # get WCS infomation
+                WCSinfo = wcs.WCS(self.header)
+                
+                # convert to xpix and ypix
+                xpix, ypix = wcs.utils.skycoord_to_pixel(centreCoord, WCSinfo)
+                
+                # convert back to sky coordinates of image for APLpy
+                worldCoord = WCSinfo.all_pix2world([xpix],[ypix],0)
+            
+                
+                # see if radius or length/width data present 
+                if "rad" in recentre:    
+                    f1.recenter(worldCoord[0][0], worldCoord[1][0], radius=recentre['rad'].to(u.degree).value)
+                elif "radius" in recentre:
+                    f1.recenter(worldCoord[0][0], worldCoord[1][0], radius=recentre['radius'].to(u.degree).value)
+                elif "width" in recentre and "height" in recentre:
+                    f1.recenter(worldCoord[0][0], worldCoord[1][0], width=recentre['width'].to(u.degree).value, height=recentre['height'].to(u.degree).value)
+                else:
+                    print("Cannot recentre as no size information identified")
+        
+        # add colorbar
+        if hide_colourbar is False:
+            f1.add_colorbar()
+            f1.colorbar.show()
+            if hasattr(self, 'unit'):
+                f1.colorbar.set_axis_label_text(self.unit)
+        
+        # save plot if desired
+        if save is not None:
+            plt.savefig(save)
+        
+        plt.show()
 
     
     def saveToFits(self, outPath, overwrite=False):
@@ -3108,6 +3116,8 @@ def plot(self, recentre=None, stretch='linear', vmin=None, vmid=None, vmax=None,
         return fitsHdu
 
 ##############################################################################################################
+###############################################################################################################        
+###############################################################################################################
 
 # define function to plot multiple power spectra
 def multiPowerSpectraPlot(images, units=None, matchProjection=False, refImage=0, oneD=True, mask=None, spatialUnits=u.deg, normaliseScale=None, labels=None, linestyle=None, color=None):
