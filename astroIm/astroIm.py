@@ -332,11 +332,11 @@ class astroImage(object):
         # define standard beam areas
         beamAreas = {"SCUBA-2":{"450":141.713*u.arcsecond**2., "850":246.729*u.arcsecond**2.},\
                      "SPIRE":{"250":469.4*u.arcsecond**2., "350":831.3*u.arcsecond**2., "500":1804.3*u.arcsecond**2.},\
-                     "NIKA2":{"260":215.0*u.arcsecond**2., "160":432.0*u.arcsecond**2.},\
+                     "NIKA-2":{"260":152.5*u.arcsecond**2., "160":367.1*u.arcsecond**2.},\
                      "Planck":{"857":24.244*u.arcmin**2, "545":26.535*u.arcmin**2, "353":26.714*u.arcmin**2, "217":28.447*u.arcmin**2,\
                                "143":59.954*u.arcmin**2, "100":105.778*u.arcmin**2, "070":200.742*u.arcmin**2, "044":832.946*u.arcmin**2, "030":1189.513*u.arcmin**2}, 
                      "SCUBA-2&Planck":{"850":246.729*u.arcsecond**2.}, "SCUBA-2&SPIRE":{"450":141.713*u.arcsecond**2.},\
-                     "NIKA-2&Planck":{"260":215.0*u.arcsecond**2., "160":432.0*u.arcsecond**2.}}
+                     "NIKA-2&Planck":{"260":152.5*u.arcsecond**2., "160":367.1*u.arcsecond**2.}}
         
         if instrument is not None:
             return beamAreas[instrument][band]
@@ -350,8 +350,9 @@ class astroImage(object):
         centralWavelengths = {"SCUBA-2":{"450":450.0*u.micron, "850":850.0*u.micron}, 
                               "SPIRE":{"250":250.0*u.micron, "350":350.0*u.micron, "500":500.0*u.micron},\
                               "PACS":{"70":70.0*u.micron, "100":100*u.micron, "160":160.0*u.micron},\
-                              "NIKA-2":{"260":1.15*u.mm, "160":1.875*u.mm**2.},\
-                              "Planck":{"353":850.0*u.micron}}
+                              "NIKA-2":{"260":1.15*u.mm, "160":1.875*u.mm},\
+                              "Planck":{"857":350.0*u.micron, "545":550*u.micron, "353":850.0*u.micron, "217":1.382*u.mm,\
+                                        "143":2.097*u.mm, "100":3.0*u.mm, "070":4.286*u.mm, "044":6.818*u.mm, "030":10.0*u.mm}}
         
         if instrument is not None:
             return centralWavelengths[instrument][band]
@@ -364,7 +365,7 @@ class astroImage(object):
         # define central wavelengths for bands in micron
         FWHMs = {"SCUBA-2":{"450":7.9*u.arcsecond, "850":13.0*u.arcsecond},\
                  "SPIRE":{"250":17.6*u.arcsecond, "350":23.9*u.arcsecond, "500":35.2*u.arcsecond},\
-                 "NIKA-2":{"260":11.1*u.arcsecond, "160":17.6*u.arcsecond},\
+                 "NIKA-2":{"260":11.6*u.arcsecond, "160":18.0*u.arcsecond},\
                  "Planck":{"857":4.325*u.arcmin, "545":4.682*u.arcmin, "353":4.818*u.arcmin, "217":4.990*u.arcmin,\
                            "143":7.248*u.arcmin, "100":9.651*u.arcmin, "070":13.252*u.arcmin, "044":27.005*u.arcmin, "030":32.239*u.arcmin}}
         
@@ -2088,13 +2089,6 @@ class astroImage(object):
                     if verbose:
                         print("Calculating Beam Area from Gaussian Beam information")
                     beamAreas[self.instrument][self.band] = 1.1331 * self.beam['BMAJ'] * self.beam['BMIN']
-                        
-            
-            # program conversion SCUBA-2 pW to Jy/arcsec^2
-            scubaConversions = {"450":{"Jy/beam":497.6, "Jy/arcsec^2":3.51}, "850":{"Jy/beam":480.5, "Jy/arcsec^2":1.95}}
-            
-            # program to convert planck to MJy/sr
-            planckConversion = {"353":287.450}
             
             if oldUnit == newUnit:
                 # check that not already in correct unit
@@ -2132,6 +2126,34 @@ class astroImage(object):
                            print("Image converted to ", newUnit)
                         return
                 
+                # see if returning image to standard instrumental units
+                postInstrumentConversion = False
+                if self.standardInstrumentalUnit(self.instrument, newUnit):
+                    # see what unit need the map to be in to convert
+                    instConvUnit, instConvValue = self.standardInstrumentConversion(instrument=self.instrument, band=self.band)
+
+                    # see if image is in required units already
+                    if oldUnit in units[instconvUnit]:
+                        # apply changes to image
+                        self.image = self.image / instConvValue
+                        if hasattr(self,'error'):
+                            self.error = self.error / instConvValue
+                        self.header['BUNIT'] = newUnit
+                        self.unit = newUnit
+                                                
+                        if hasattr(self, "bkgMedian"):
+                            self.bkgMedian = self.bkgMedian / instConvValue
+                        if hasattr(self, "bkgStd"):
+                            self.bkgMedian = self.bkgStd / instConvValue
+
+                        print("Image converted to ", newUnit)
+                        return
+                    
+                    else:
+                        defaultInstUnit = newUnit
+                        newUnit = instrConvUnit
+                        postInstrumentConversion = True
+
                 ### process the old units
                 if oldUnit in units["Jy/pix"]:
                     conversion = 1.0 * u.Jy
@@ -2171,9 +2193,9 @@ class astroImage(object):
                         pixArea = self.pixSize * self.pixSize
                         conversion = conversion * pixArea.to(u.arcsecond**2.0).value * 1000.0
                     elif newUnit in units["Jy/beam"]:
-                        conversion = (conversion * beamAreas[self.instrument][self.band]).value
+                        conversion = (conversion * beamAreas[self.instrument][self.band].to(u.arcsec**2.0)).value
                     elif newUnit in units["mJy/beam"]:
-                        conversion = (conversion * beamAreas[self.instrument][self.band] * 1000.0).value
+                        conversion = (conversion * beamAreas[self.instrument][self.band].to(u.arcsec**2.0) * 1000.0).value
                 elif newUnit in units["Jy/arcsec^2"]:
                     conversion = conversion.to(u.Jy/u.arcsecond**2.0).value
                 elif newUnit in units["mJy/arcsec^2"]:
@@ -2186,6 +2208,9 @@ class astroImage(object):
                 else:
                     raise ValueError("Unit not programmed")
                 
+                if postInstrumentConversion:
+                    conversion = conversion / instConvValue
+                    newUnit = defaultInstUnit
 
                 self.image = self.image * conversion
                 if hasattr(self,'error'):
@@ -2216,15 +2241,13 @@ class astroImage(object):
         # function to adjust for difference in central wavelengths
         print("Performing Central Wavelength Adjustment")
         
-        # import PPMAP cube
-        import ppmapCube
-
         # get current central wavelength
         currentWavelength = self.standardCentralWavelengths(instrument=self.instrument, band=self.band)
         
         
         # see if have a PPMAP cube
         if "ppmapCube" in adjustSettings:
+            from astroIm import ppmapCube
             if "ppmapCubeErr" in adjustSettings:
                 # load PPMAP cube 
                 ppMap = ppmapCube(adjustSettings["ppmapCube"], sigmaCube=adjustSettings["ppmapCubeErr"])
@@ -2255,8 +2278,8 @@ class astroImage(object):
         elif adjustSettings["temperature"] is not None and isinstance(adjustSettings["temperature"],str) is False and adjustSettings["beta"] is not None and isinstance(adjustSettings["beta"],str) is False:
             # if constant just compare what a blackbody would be before and after
             blackbody = blackbody_nu(temperature=adjustSettings["temperature"]*u.K)
-            newLevel = (con.c/(newWavelength*u.um))**adjustSettings["beta"] * blackbody(newWavelength*u.um)
-            currLevel = (con.c/(currentWavelength*u.um))**adjustSettings["beta"] * blackbody(currentWavelength*u.um)
+            newLevel = (con.c/(newWavelength))**adjustSettings["beta"] * blackbody(newWavelength)
+            currLevel = (con.c/(currentWavelength))**adjustSettings["beta"] * blackbody(currentWavelength)
             factor = (newLevel / currLevel).value
             mapMethod = False
         else:
@@ -2335,9 +2358,6 @@ class astroImage(object):
         # function to adjust image for colour corrections
         print("Performing Colour Correction Adjustment")
         
-        # import ppmap cube
-        import ppmapCube
-
         # define function that gets cc value for beta/temperature combination
         def ccValueFind(temperature, beta, ccInfo):
             Tgrid = ccInfo["temperatures"]
@@ -2398,6 +2418,9 @@ class astroImage(object):
         
         # see if have a PPMAP cube
         if "ppmapCube" in adjustSettings:
+            # import ppmap cube
+            from astroIm import ppmapCube
+            
             if "ppmapCubeErr" in adjustSettings:
                 # load PPMAP cube 
                 ppMap = ppmapCube(adjustSettings["ppmapCube"], sigmaCube=adjustSettings["ppmapCubeErr"])
@@ -2719,7 +2742,7 @@ class astroImage(object):
 
     ###############################################################################################################    
         
-    def imageFFTcombine(self, lowresImage, filterScale=None, beamArea=None, filterType="gauss", butterworthOrder=None, sigmoidScaling=None, beamMatchedMode=True):
+    def imageFFTcombine(self, lowresImage, filterScale=None, beamArea=None, filterType="gauss", butterworthOrder=None, sigmoidScaling=None, beamMatchedMode=True, medianSubtract=True):
         # function to combine this image with another
         
         # check that this is an allowed combination
@@ -2733,15 +2756,16 @@ class astroImage(object):
                         beamAreas[instrument][band] = beamArea[instrument][band]
                     else:
                         beamAreas[instrument] = {band:beamArea[instrument][band]}
-        
+
         # get the two images
         hires = self.image
         lowres = lowresImage.image
         
         # subtract background from both
-        hires = hires  - self.bkgMedian
-        lowres = lowres - lowresImage.bkgMedian
-        
+        if medianSubtract:
+            hires = hires  - self.bkgMedian
+            lowres = lowres - lowresImage.bkgMedian
+
         # see if either have NaNs
         NaNmask = np.where( (np.isnan(lowres) == True) | (np.isnan(hires) == True) )
         lowres[np.isnan(lowres) == True] = 0
@@ -2933,21 +2957,32 @@ class astroImage(object):
             spatialUnits = powerSpecData[0]['spatial'].unit
 
         # process line property information
-        for lineProp in [labels, linestyle, color]:
+        lineProperties = [labels, linestyle, color]
+        for i in range(0,len(lineProperties)):
+            lineProp = lineProperties[i]
             if lineProp is None:
-                lineProp = [None] * len(powerSpecData)
+                lineProperties[i] = [None] * len(powerSpecData)
             else:
-                if isinstance(labels, str) and len(powerSpecData) == 1:
-                    lineProp = [lineProp]
-                elif isinstance(labels, list) and len(powerSpecData) == len(labels):
-                    lineProp = lineProp
+                if isinstance(lineProp, str) and len(powerSpecData) == 1:
+                    lineProperties[i] = [lineProp]
+                elif isinstance(lineProp, list) and len(powerSpecData) == len(lineProp):
+                    continue
+                elif isinstance(lineProp, list) and len(powerSpecData) != len(lineProp) and len(lineProp) == 1:
+                    lineProperties[i] = lineProp * len(powerSpecData)
                 else:
                     raise Exception(f"{lineProp} variable input is not understood")
         
         # plot data
+        addLegend = False
         for i in range(0,len(powerSpecData)):
-            f1.plot(powerSpecData[i]['frequency'], powerSpecData[i]['psd'])
-            
+            f1.plot(powerSpecData[i]['frequency'], powerSpecData[i]['psd'], label=lineProperties[0][i], linestyle=lineProperties[1][i], color=lineProperties[2][i])
+            if lineProperties[0][i] is not None:
+                addLegend = True
+        
+        # add legend if needed
+        if addLegend:
+            f1.legend()
+
         # set scales to log
         f1.set_xscale("log")
         f1.set_yscale("log")
@@ -3120,12 +3155,44 @@ class astroImage(object):
 ###############################################################################################################
 
 # define function to plot multiple power spectra
-def multiPowerSpectraPlot(images, units=None, matchProjection=False, refImage=0, oneD=True, mask=None, spatialUnits=u.deg, normaliseScale=None, labels=None, linestyle=None, color=None):
+def multiPowerSpectraPlot(images, units=None, matchProjection=False, refImage=0, oneD=True, mask=None, spatialUnits=u.deg, normaliseScale=None, labels=None, linestyle=None, color=None, beamAreas=None):
     # function to plot multiple power spctra on one plot
 
     ### apply image pre-processing
     # convert units
-    if units is not None:
+    if units is None:
+        #try:
+        # convert all images to Jy/beam
+        for imageObj in images:
+            imageObj.convertUnits("Jy/beam")
+        
+        # try to match beam areas
+        if beamAreas is None:
+            refBeamArea = images[refImage].standardBeamAreas(instrument=images[refImage].instrument, band=images[refImage].band)
+            
+            for i in range(0,len(images)):
+                # skip if refimage
+                if i == refImage:
+                    continue
+                
+                # get images beam area
+                beamArea = images[i].standardBeamAreas(instrument=images[i].instrument, band=images[i].band)
+                
+                # scale image by beam ratio
+                images[i].image = images[i].image * (refBeamArea/beamArea).to("").value
+        else:
+            if isinstance(beamAreas, (list, tuple, np.ndarray)):
+                if len(beamAreas) != len(images):
+                    raise Exception("Beam Areas list is not same length as images provided")
+            else:
+                raise Exception("Beam Areas provided needs to be a list")
+            
+            # adjust image
+            for i in range(0,len(images)):
+                images[i].image = images[i].image * beamAreas[refImage]/beamAreas[i]
+        #except:
+        #    raise Exception("Unable to automatically scale powerspectra")
+    elif units is not None:
         for imageObj in images:
             imageObj.convertUnits(units)
     
@@ -3195,6 +3262,10 @@ def loadColourCorrect(colFile, SPIREtype):
             if "Planck" not in newCCinfo:
                 newCCinfo["Planck"] = {}
             newCCinfo["Planck"][planckConvert[key[6:]]] = ccinfo[key]
+        elif key[0:4] == "NIKA":
+            if "NIKA-2" not in newCCinfo:
+                newCCinfo['NIKA-2'] = {}
+            newCCinfo['NIKA-2'][key[4:]] = ccinfo[key]
         else:
             raise "Instrument/band not programmed for cc load"
 
