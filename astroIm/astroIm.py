@@ -173,6 +173,8 @@ class astroImage(object):
                 self.instrument = self.header['INSTRUME']
             elif 'INSTRMNT' in self.header:
                 self.instrument = self.header['INSTRMNT']
+            elif 'ORIGIN' in self.header and self.header['ORIGIN'] == "2MASS":
+                self.instrument = "2MASS"
             elif ext != 0:
                 try:
                     primeHeader = fits[0].header
@@ -258,7 +260,18 @@ class astroImage(object):
         if self.instrument == "PACS" or self.instrument == "SPIRE":
             self.band = str(int(self.band))
     
+        # see if GALEX needs band converting
+        if self.instrument == "GALEX":
+            if self.band == "1528":
+                self.band = "FUV"
+            elif self.band == "2271":
+                self.band == "NUV"
        
+        # see if 2MASS band needs adjusting
+        if self.instrument == "2MASS":
+            if self.band in ['j', 'h', 'k']:
+                self.band = self.band.upper()
+
         # see if bunit in header, if planck add it
         if "BUNIT" not in self.header:
             if self.instrument == "Planck":
@@ -352,7 +365,9 @@ class astroImage(object):
                               "PACS":{"70":70.0*u.micron, "100":100*u.micron, "160":160.0*u.micron},\
                               "NIKA-2":{"260":1.15*u.mm, "160":1.875*u.mm},\
                               "Planck":{"857":350.0*u.micron, "545":550*u.micron, "353":850.0*u.micron, "217":1.382*u.mm,\
-                                        "143":2.097*u.mm, "100":3.0*u.mm, "070":4.286*u.mm, "044":6.818*u.mm, "030":10.0*u.mm}}
+                                        "143":2.097*u.mm, "100":3.0*u.mm, "070":4.286*u.mm, "044":6.818*u.mm, "030":10.0*u.mm},\
+                              "GALEX":{"FUV":1528*u.angstrom, "NUV":2271*u.angstrom},\
+                              "2MASS":{"J":1.235*u.micron, "H":1.662*u.micron, "K":2.159*u.micron}}
         
         if instrument is not None:
             return centralWavelengths[instrument][band]
@@ -367,7 +382,9 @@ class astroImage(object):
                  "SPIRE":{"250":17.6*u.arcsecond, "350":23.9*u.arcsecond, "500":35.2*u.arcsecond},\
                  "NIKA-2":{"260":11.6*u.arcsecond, "160":18.0*u.arcsecond},\
                  "Planck":{"857":4.325*u.arcmin, "545":4.682*u.arcmin, "353":4.818*u.arcmin, "217":4.990*u.arcmin,\
-                           "143":7.248*u.arcmin, "100":9.651*u.arcmin, "070":13.252*u.arcmin, "044":27.005*u.arcmin, "030":32.239*u.arcmin}}
+                           "143":7.248*u.arcmin, "100":9.651*u.arcmin, "070":13.252*u.arcmin, "044":27.005*u.arcmin, "030":32.239*u.arcmin},\
+                 "GALEX":{"FUV":4.3*u.arcsec, "NUV":5.3*u.arcsec},\
+                 "2MASS":{"J":2.8*u.arcsec, "H":2.7*u.arcsec, "K":2.8*u.arcsec}}
         
         if instrument is not None and band is not None:
             return FWHMs[instrument][band]
@@ -383,12 +400,19 @@ class astroImage(object):
     def standardInstrumentalUnit(self, instrument, unit):
         # define standard instrumental units and provide function to test if they are programmed
         instrumentUnits = {"SCUBA-2":"pW",\
-                           "Planck":"K_CMB"}
+                           "Planck":"K_CMB",\
+                           "GALEX":"ct/s"}
         
-        if instrument in instrumentUnits and instrumentUnits[instrument] == unit:
-            return True
+        if unit is None:
+            if instrument in instrumentUnits:
+                return instrumentUnits[instrument]
+            else:
+                return None
         else:
-            return False
+            if instrument in instrumentUnits and instrumentUnits[instrument] == unit:
+                return True
+            else:
+                return False
     
     ###############################################################################################################
 
@@ -397,7 +421,9 @@ class astroImage(object):
         instrumentConversions = {"SCUBA-2":{"450":{"outUnit":"Jy/arcsec^2", "value":3.51}, "850":{"outUnit":"Jy/arcsec^2", "value":1.95}},\
                                  "Planck":{"857":{"outUnit":"MJy/sr", "value":2.27}, "545":{"outUnit":"MJy/sr", "value":58.04},\
                                            "353":{"outUnit":"MJy/sr", "value":287.450}, "217":{"outUnit":"MJy/sr", "value":483.690},\
-                                           "143":{"outUnit":"MJy/sr", "value":371.74}, "100":{"outUnit":"MJy/sr", "value":244.1}}} 
+                                           "143":{"outUnit":"MJy/sr", "value":371.74}, "100":{"outUnit":"MJy/sr", "value":244.1}},\
+                                 "GALEX":{"FUV":{"outUnit":"Jy/pix", "value":1.076e-4}, "NUV":{"outUnit":"Jy/pix", "value":3.373e-5}},# Morriset 2007 \
+                                    } 
         
         if instrument is not None and band is not None:
             return instrumentConversions[instrument][band]["outUnit"], instrumentConversions[instrument][band]["value"]
@@ -410,7 +436,7 @@ class astroImage(object):
         # function to return dictionary of programmed units and groups
         
         # list of programmed units (grouped by just syntax differences)
-        units = {"other":["pW", "K_CMB"],\
+        units = {"other":["pW", "K_CMB", "ct/s"],\
                  "Jy/arcsec^2":["Jy/arcsec^2", "Jy arcsec^-2", "Jy arcsec-2", "Jy arcsec**-2"],\
                  "mJy/arcsec^2":["mJy/arcsec^2", "mJy arcsec^-2", "mJy arcsec-2", "mJy/arcsec**2"], \
                  "MJy/sr":["MJy/sr", "MJy per sr", "MJy sr^-1", "MJy sr-1", "MJy sr**-1"],\
@@ -487,19 +513,102 @@ class astroImage(object):
         return round(pixSizes[0], 6)
     
     ###############################################################################################################
+
+    def coordInImage(self, coords, checkNaN=False, pixPosition=False):
+        # function to see if a position or a list of positions is in an image
+
+        # create WCS
+        WCSinfo = wcs.WCS(self.header)
+
+        # create output array
+        inImage = np.zeros(len(coords), dtype=bool)
+
+        # see if its a list
+        if isinstance(coords, (list,tuple)):
+            # create X, Y array
+            pixCoordX = np.zeros(len(coords))
+            pixCoordY = np.zeros(len(coords))
+            # check each coordinate
+            for i in range(0,len(coords)):
+                pixCoordX[i], pixCoordY[i] = wcs.utils.skycoord_to_pixel(coords[i], WCSinfo)
+        else:
+            # get X, Y position from each coordinate
+            pixCoordX, pixCoordY = wcs.utils.skycoord_to_pixel(coords, WCSinfo)
+
+        # see if within the boundaries of the image
+        sel = np.where((np.isnan(pixCoordX) == False) & (np.isnan(pixCoordY) == False) & (pixCoordX >= 0.0) & (pixCoordX <= self.image.shape[1]-1) & (pixCoordY >= 0.0) & (pixCoordY <= self.image.shape[0]-1))
+        inImage[sel] = True
+
+        # check if position in image is a NaN
+        if checkNaN:
+            sel = np.where(inImage == True)
+            pixVals = self.image[np.array(np.round(pixCoordY[sel]), dtype=int), np.array(np.round(pixCoordX[sel]), dtype=int)]
+            sel2 = np.where(np.isnan(pixVals) == True)
+            inImage[sel][sel2] = False
         
-    def background_sigmaClip(self, snr=2, npixels=5, dilate_size=11, sigClip=3.0, iterations=20, maskMatch=None, apply=False):
+        # check if coordinate was given as a single position and if so adjust output
+        if isinstance(coords, (list,tuple)) is False and len(coords) == 1:
+            if isinstance(coords.ra.value, (float, np.float64, np.float32, np.float16, np.float128, np.float129)):
+                inImage = inMage[0]
+                pixCoordX = pixCoordX[0]
+                pixCoordY = pixCoordY[0]
+
+        if pixPosition:
+            return inImage, (pixCoordX, pixCoordY)
+        else:
+            return inImage
+
+
+    ###############################################################################################################
+        
+    def background_sigmaClip(self, snr=2, npixels=5, dilate_size=11, sigClip=3.0, iterations=20, mask=None, apply=False, returnMask=False):
         # function to get background level and noise
         
         # import modules
         from astropy.stats import sigma_clipped_stats
         from photutils import make_source_mask
         
-        if maskMatch is None:
-            mask = make_source_mask(self.image, nsigma=snr, npixels=npixels, dilate_size=dilate_size)
+        if mask is None:
+            imgMask = make_source_mask(self.image, nsigma=snr, npixels=npixels, dilate_size=dilate_size)
         else:
-            mask = maskMatch
-        _,median,std = sigma_clipped_stats(self.image, mask=mask, sigma=sigClip, maxiters=iterations)
+            if isinstance(mask,(list,tuple)) or str(mask.__class__).count("regions.shapes") > 0:
+                # if only one region provided embed in list
+                if str(mask.__class__).count("regions.shapes") > 0:
+                    mask = [mask]
+                
+                # create mask
+                imgMask = np.zeros(self.image.shape)
+                
+                # create blank wcs
+                imgWCS = None
+
+                # loop over each region
+                for i in range(0,len(mask)):
+                    # if sky region convert to a pixel region
+                    if hasattr(mask[i],'to_pixel'):
+                        # get image wcs information
+                        if imgWCS is None:
+                            imgWCS = wcs.WCS(self.header)
+                        
+                        # convert to pixel mask
+                        mask[i] = mask[i].to_pixel(imgWCS)
+
+                    # create individual mask
+                    tempMask = mask[i].to_mask(mode='center')
+                    imgRegion = tempMask.to_image(self.image.shape)
+
+                    # see if region is empty (i.e., no overlap)
+                    if imgRegion is None:
+                        continue
+
+                    imgMask = imgMask + imgRegion
+
+                sel = np.where(imgMask > 1)
+                imgMask[sel] = 1
+                imgMask = np.array(imgMask, dtype='bool')
+            else:
+                imgMask = mask
+        _,median,std = sigma_clipped_stats(self.image, mask=imgMask, sigma=sigClip, maxiters=iterations)
         self.bkgMedian = median
         self.bkgStd = std
         
@@ -507,7 +616,10 @@ class astroImage(object):
             self.image = self.image - self.bkgMedian
             self.bkgMedian = 0.0
         
-        return mask
+        if returnMask:
+            return mask
+        else:
+            return
     
     ###############################################################################################################
     
@@ -519,6 +631,91 @@ class astroImage(object):
         
         return
     
+    ###############################################################################################################
+
+    def background_polySub(self, polyOrder=5, snr=2, npixels=5, dilate_size=11, performSigmaClip=True, sigClip=3.0, iterations=20, mask=None):
+        # function to perform a polynomial fit to the image
+
+        # import modules
+        from astropy.stats import sigma_clip
+        from photutils import make_source_mask
+        from astropy.modeling.models import Polynomial2D
+        from astropy.modeling import fitting as astropyFitter
+        
+        if mask is None:
+            imgMask = make_source_mask(self.image, nsigma=snr, npixels=npixels, dilate_size=dilate_size)
+        else:
+            if isinstance(mask,(list,tuple)) or str(mask.__class__).count("regions.shapes") > 0:
+                # if only one region provided embed in list
+                if str(mask.__class__).count("regions.shapes") > 0:
+                    mask = [mask]
+                
+                # create mask
+                imgMask = np.zeros(self.image.shape)
+                
+                # create blank wcs
+                imgWCS = None
+
+                # loop over each region
+                for i in range(0,len(mask)):
+                    # if sky region convert to a pixel region
+                    if hasattr(mask[i],'to_pixel'):
+                        # get image wcs information
+                        if imgWCS is None:
+                            imgWCS = wcs.WCS(self.header)
+                        
+                        # convert to pixel mask
+                        mask[i] = mask[i].to_pixel(imgWCS)
+
+                    # create individual mask
+                    tempMask = mask[i].to_mask(mode='center')
+                    imgRegion = tempMask.to_image(self.image.shape)
+
+                    # see if region is empty (i.e., no overlap)
+                    if imgRegion is None:
+                        continue
+
+                    imgMask = imgMask + imgRegion
+
+                sel = np.where(imgMask > 1)
+                imgMask[sel] = 1
+                imgMask = np.array(imgMask, dtype='bool')
+            else:
+                imgMask = mask
+    
+        # create a copy of the image to manipulate
+        imgData = self.image.copy()
+
+        # mask data with nan's
+        sel = np.where(imgMask == True)
+        imgData[sel] = np.nan
+
+        # perform sigma clipping if desired
+        if performSigmaClip:
+            imgData = sigma_clip(imgData, sigma=sigClip, maxiters=iterations, axis=(0,1), masked=False)
+
+        ## fit polynomial 2D model
+        # crete x, y points
+        y, x = np.mgrid[:imgData.shape[0],:imgData.shape[1]]
+        
+        # initiate fitter
+        mod_init = Polynomial2D(degree=polyOrder)
+        fitMod = astropyFitter.LevMarLSQFitter()
+
+        # select non-nan pixels
+        nonNaN = np.where(np.isnan(imgData) == False)
+
+        # perform fit
+        pfit = fitMod(mod_init, x[nonNaN], y[nonNaN], imgData[nonNaN])
+
+        # create 2D polynomial image
+        backPoly = pfit(x,y)
+
+        # subtract from image
+        self.image = self.image - backPoly
+
+        return
+
     ###############################################################################################################
     
     def ellipticalAnnulusBackSub(self, centre, inner=None, outer=None, axisRatio=None, PA=None, outerCircle=False, backNoise=False,\
@@ -766,6 +963,7 @@ class astroImage(object):
                 
             else:
                 centres = galInfo
+        
         else:
             centres = galInfo
                     
@@ -1246,7 +1444,7 @@ class astroImage(object):
             backApertures = []
         
         # if centers is only one value embed in list
-        if isinstance(centres, SkyCoord):
+        if isinstance(centres, SkyCoord) and len(centres.shape) == 0:
             centres  = [centres]
         elif isinstance(centres, (list, tuple, np.ndarray)) is False:
             centres = [centres]
@@ -1704,7 +1902,7 @@ class astroImage(object):
                     del(phot_table['aperture_error'])
             
             # try adding in unit
-            if hasattr(self, 'unit'):
+            if hasattr(self, 'unit') and self.unit is not None:
                 #unts = self.programmedUnits()
                 if calculateMean:
                     phot_table['aperture_mean'].unit = self.unit
@@ -2043,7 +2241,7 @@ class astroImage(object):
         
     ###############################################################################################################
 
-    def convertUnits(self, newUnit, conversion=None, beamArea=None, verbose=True):
+    def convertUnits(self, newUnit, conversion=None, beamArea=None, forceInstrumentalUnit=False, verbose=True):
         # function to convert units of map
         
         # if a conversion value given use that, if not calculate
@@ -2066,7 +2264,11 @@ class astroImage(object):
             if verbose:
                 print(self.band, " image converted to ", newUnit, " using provided conversion")
         else:
-            
+            # if forcing instrumental units
+            if forceInstrumentalUnit:
+                self.header['BUNIT'] = self.standardInstrumentalUnit(self.instrument, None)
+                self.unit = self.standardInstrumentalUnit(self.instrument, None)
+
             # get list of programmed units
             units = self.programmedUnits()
             
