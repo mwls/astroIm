@@ -548,8 +548,9 @@ class astroImage(object):
         
         # check if coordinate was given as a single position and if so adjust output
         if isinstance(coords, (list,tuple)) is False and len(coords) == 1:
-            if isinstance(coords.ra.value, (float, np.float64, np.float32, np.float16, np.float128, np.float129)):
-                inImage = inMage[0]
+
+            if isinstance(coords.ra.value, (float, np.float64, np.float32, np.float16, np.float128, np.float256)):
+                inImage = inImage[0]
                 pixCoordX = pixCoordX[0]
                 pixCoordY = pixCoordY[0]
 
@@ -920,6 +921,9 @@ class astroImage(object):
     def circularAperture(self, galInfo, radius=None, multiRadius = False, localBackSubtract=None, names=None, method='exact', subpixels=None, backMedian=False, maskNaN = True, error=None):
         # function to perform circular aperture photometry 
         
+        # import necessary modules
+        from astropy.coordinates import SkyCoord
+
         # set mode to circle
         mode = "circle"
         
@@ -964,6 +968,9 @@ class astroImage(object):
             else:
                 centres = galInfo
         
+        # if skycoord object contains a list of coordinates convert to a list
+        elif isinstance(galInfo, SkyCoord) and len(galInfo.shape) > 0:
+            centres = list(galInfo)
         else:
             centres = galInfo
                     
@@ -996,6 +1003,9 @@ class astroImage(object):
     def ellipticalAperture(self, galInfo, major=None, minor=None, axisRatio=None, PA=None, multiRadius = False, localBackSubtract=None, names=None, method='exact', subpixels=None, backMedian=False, maskNaN = True, error=None):
         # function to perform circular aperture photometry 
         
+        # import necessary modules
+        from astropy.coordinates import SkyCoord
+
         # set mode to circle
         mode = "ellipse"
         
@@ -1096,6 +1106,11 @@ class astroImage(object):
                         
             else:
                 centres = galInfo
+        
+        # if skycoord object contains a list of coordinates convert to a list
+        elif isinstance(galInfo, SkyCoord) and len(galInfo.shape) > 0:
+            centres = list(galInfo)
+        
         else:
             centres = galInfo
                     
@@ -1176,6 +1191,9 @@ class astroImage(object):
     def rectangularAperture(self, galInfo, length=None, width=None, ratio=None, PA=None, multiRadius = False, localBackSubtract=None, names=None, method='exact', subpixels=None, backMedian=False, maskNaN = True, error=None):
         # function to perform circular aperture photometry 
         
+        # import necessary modules
+        from astropy.coordinates import SkyCoord
+
         # set mode to circle
         mode = "rectangle"
         
@@ -1276,6 +1294,13 @@ class astroImage(object):
                 centres = galInfo
                 minor = width
                 major = length
+        
+        # if skycoord object contains a list of coordinates convert to a list
+        elif isinstance(galInfo, SkyCoord) and len(galInfo.shape) > 0:
+            centres = list(galInfo)
+            minor = width
+            major = length
+        
         else:
             centres = galInfo
             minor = width
