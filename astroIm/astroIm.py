@@ -3360,7 +3360,117 @@ class astroImage(object):
         
         plt.show()
 
-    
+    ###########################################################################################################
+
+    def interactivePlot(self, recentre=None, stretch='linear', vmin=None, vmid=None, vmax=None, cmap=None, facecolour='white', nancolour='black', hide_colourbar=False, save=None):
+        # function to make a quick plot of the data using matplotlib and aplpy
+        
+        # import modules
+        import aplpy
+        import matplotlib.pyplot as plt
+        
+        # create figure
+        fig = plt.figure(figsize=(12,6))
+        
+        # create binding so when click get the location
+        binding_id = plt.connect('button_press_event', clickEvent)
+
+        # repackage into an HDU 
+        hdu = pyfits.PrimaryHDU(self.image, self.header)
+        
+        # create aplpy axes
+        f1 = aplpy.FITSFigure(hdu, figure=fig, subplot=[0.05,0.05,0.45,0.9])
+        
+        # if doing a log stretch find vmax, vmid, vmin
+        if stretch == "log":
+            if vmin is None or vmax is None or vmid is None:
+                # select non-NaN pixels
+                nonNAN = np.where(np.isnan(self.image) == False)
+                
+                # sort pixels
+                sortedPix = self.image[nonNAN]
+                sortedPix.sort()
+                
+                # set constants
+                minFactor = 1.0
+                brightPixCut = 5
+                brightClip = 0.9
+                midScale = 301.0
+                
+                if vmin is None:
+                    numValues = np.round(len(sortedPix) * 0.95).astype(int)
+                    vmin = -1.0 * sortedPix[:-numValues].std() * minFactor
+                
+                if vmax is None:
+                    vmax = sortedPix[-brightPixCut] * brightClip
+                
+                if vmid is None:
+                    vmid=(midScale * vmin - vmax)/100.0
+        
+        
+        # apply colourscale
+        f1.show_colorscale(stretch=stretch, cmap=cmap, vmin=vmin, vmax=vmax, vmid=vmid)
+        
+        # set nan colour to black, and face
+        f1.set_nan_color(nancolour)
+        f1.ax.set_facecolor(facecolour)
+        
+        # recentre image
+        if recentre is not None:
+            # import skycoord object
+            from astropy.coordinates import SkyCoord
+            
+            # creat flag to check if centre found
+            noCentre = False
+            
+            # get/calculate SkyCood object
+            if "coord" in recentre:
+                centreCoord = recentre["coord"]            
+            elif "RA" in recentre and "DEC" in recentre:
+                centreCoord = SkyCoord(ra=recentre['RA'], dec=recentre['DEC'], frame='icrs')
+            elif "l" in recentre and "b" in recentre:
+                centreCoord = SkyCoord(l=recentre["l"], b=recentre['b'], frame='galactic')
+            else:
+                noCentre = True
+                print("Cannot recentre as no coordinate information identified")
+            
+            
+            if noCentre is False:
+                # get WCS infomation
+                WCSinfo = wcs.WCS(self.header)
+                
+                # convert to xpix and ypix
+                xpix, ypix = wcs.utils.skycoord_to_pixel(centreCoord, WCSinfo)
+                
+                # convert back to sky coordinates of image for APLpy
+                worldCoord = WCSinfo.all_pix2world([xpix],[ypix],0)
+            
+                
+                # see if radius or length/width data present 
+                if "rad" in recentre:    
+                    f1.recenter(worldCoord[0][0], worldCoord[1][0], radius=recentre['rad'].to(u.degree).value)
+                elif "radius" in recentre:
+                    f1.recenter(worldCoord[0][0], worldCoord[1][0], radius=recentre['radius'].to(u.degree).value)
+                elif "width" in recentre and "height" in recentre:
+                    f1.recenter(worldCoord[0][0], worldCoord[1][0], width=recentre['width'].to(u.degree).value, height=recentre['height'].to(u.degree).value)
+                else:
+                    print("Cannot recentre as no size information identified")
+        
+        # add colorbar
+        if hide_colourbar is False:
+            f1.add_colorbar()
+            f1.colorbar.show()
+            if hasattr(self, 'unit'):
+                f1.colorbar.set_axis_label_text(self.unit)
+        
+        # save plot if desired
+        if save is not None:
+            plt.savefig(save)
+        
+        plt.show()
+
+    ###########################################################################################################
+
     def saveToFits(self, outPath, overwrite=False):
         # function to save to fits
         
@@ -3371,7 +3481,8 @@ class astroImage(object):
 
         return
     
-    
+    ###########################################################################################################
+
     def fitsHdu(self):
         fitsHdu = pyfits.PrimaryHDU(self.image, self.header)
         
