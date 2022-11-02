@@ -144,10 +144,11 @@ class astroImage(object):
         if dustpediaHeaderCorrect:
             keywordAdjust = ["COORDSYS", "SIGUNIT", "TELESCOP", "INSTRMNT", "DETECTOR", "WVLNGTH", "HIPE_CAL", "TARGET"]
             for keyword in keywordAdjust:
-                if keyword in self.header:
+                if keyword in self.header and isinstance(self.header[keyword],str):
                     info = self.header[keyword].split("/")
                     if keyword == "SIGUNIT":
-                        if self.header[keyword][0:10].count("/") > 0:
+
+                        if self.header[keyword][0:10].count(" / ") > 0:
                             self.header[keyword] = (info[0]+"/"+info[1],info[2])
                     else:
                         self.header[keyword] = (info[0], info[1])    
@@ -562,53 +563,26 @@ class astroImage(object):
 
     ###############################################################################################################
         
-    def background_sigmaClip(self, snr=2, npixels=5, dilate_size=11, sigClip=3.0, iterations=20, mask=None, apply=False, returnMask=False):
+    def background_sigmaClip(self, snr=2, npixels=5, dilate_size=11, sigClip=3.0, iterations=20, mask=None, apply=False, returnMask=False, parallelMask=False):
         # function to get background level and noise
         
         # import modules
         from astropy.stats import sigma_clipped_stats
-        from photutils import make_source_mask
+        if mask is None:
+            from photutils import make_source_mask
+        if parallelMask:
+            import multiprocessing as mp
         
         if mask is None:
             imgMask = make_source_mask(self.image, nsigma=snr, npixels=npixels, dilate_size=dilate_size)
         else:
             if isinstance(mask,(list,tuple)) or str(mask.__class__).count("regions.shapes") > 0:
-                # if only one region provided embed in list
-                if str(mask.__class__).count("regions.shapes") > 0:
-                    mask = [mask]
-                
-                # create mask
-                imgMask = np.zeros(self.image.shape)
-                
-                # create blank wcs
-                imgWCS = None
-
-                # loop over each region
-                for i in range(0,len(mask)):
-                    # if sky region convert to a pixel region
-                    if hasattr(mask[i],'to_pixel'):
-                        # get image wcs information
-                        if imgWCS is None:
-                            imgWCS = wcs.WCS(self.header)
-                        
-                        # convert to pixel mask
-                        mask[i] = mask[i].to_pixel(imgWCS)
-
-                    # create individual mask
-                    tempMask = mask[i].to_mask(mode='center')
-                    imgRegion = tempMask.to_image(self.image.shape)
-
-                    # see if region is empty (i.e., no overlap)
-                    if imgRegion is None:
-                        continue
-
-                    imgMask = imgMask + imgRegion
-
-                sel = np.where(imgMask > 1)
-                imgMask[sel] = 1
-                imgMask = np.array(imgMask, dtype='bool')
+                imgMask = self.generateMaskFromRegions(mask, parallelMask=parallelMask)
             else:
-                imgMask = mask
+                # convert mask to boolean
+                imgMask = np.array(mask, dtype='bool')
+
+
         _,median,std = sigma_clipped_stats(self.image, mask=imgMask, sigma=sigClip, maxiters=iterations)
         self.bkgMedian = median
         self.bkgStd = std
@@ -634,59 +608,30 @@ class astroImage(object):
     
     ###############################################################################################################
 
-    def background_polySub(self, polyOrder=5, snr=2, npixels=5, dilate_size=11, performSigmaClip=True, sigClip=3.0, iterations=20, mask=None):
+    def background_polySub(self, polyOrder=5, snr=2, npixels=5, dilate_size=11, performSigmaClip=True, sigClip=3.0, iterations=20, mask=None, apply=True, downSample=None, downMethod='mean', parallelMask=False, returnMask=False):
         # function to perform a polynomial fit to the image
 
         # import modules
         from astropy.stats import sigma_clip
-        from photutils import make_source_mask
+        if mask is None:
+            from photutils import make_source_mask
         from astropy.modeling.models import Polynomial2D
         from astropy.modeling import fitting as astropyFitter
         
+        
         if mask is None:
+            print("Creating Automatic Mask")
             imgMask = make_source_mask(self.image, nsigma=snr, npixels=npixels, dilate_size=dilate_size)
         else:
             if isinstance(mask,(list,tuple)) or str(mask.__class__).count("regions.shapes") > 0:
-                # if only one region provided embed in list
-                if str(mask.__class__).count("regions.shapes") > 0:
-                    mask = [mask]
-                
-                # create mask
-                imgMask = np.zeros(self.image.shape)
-                
-                # create blank wcs
-                imgWCS = None
-
-                # loop over each region
-                for i in range(0,len(mask)):
-                    # if sky region convert to a pixel region
-                    if hasattr(mask[i],'to_pixel'):
-                        # get image wcs information
-                        if imgWCS is None:
-                            imgWCS = wcs.WCS(self.header)
-                        
-                        # convert to pixel mask
-                        mask[i] = mask[i].to_pixel(imgWCS)
-
-                    # create individual mask
-                    tempMask = mask[i].to_mask(mode='center')
-                    imgRegion = tempMask.to_image(self.image.shape)
-
-                    # see if region is empty (i.e., no overlap)
-                    if imgRegion is None:
-                        continue
-
-                    imgMask = imgMask + imgRegion
-
-                sel = np.where(imgMask > 1)
-                imgMask[sel] = 1
-                imgMask = np.array(imgMask, dtype='bool')
+                imgMask = self.generateMaskFromRegions(mask, parallelMask=parallelMask)
             else:
-                imgMask = mask
-    
+                # convert mask to boolean
+                imgMask = np.array(mask, dtype='bool')
+
         # create a copy of the image to manipulate
         imgData = self.image.copy()
-
+        
         # mask data with nan's
         sel = np.where(imgMask == True)
         imgData[sel] = np.nan
@@ -695,27 +640,151 @@ class astroImage(object):
         if performSigmaClip:
             imgData = sigma_clip(imgData, sigma=sigClip, maxiters=iterations, axis=(0,1), masked=False)
 
+        # if returning mask generate now based on NaN's
+        if returnMask:
+            imgMask = np.array(np.zeros(imgData.shape),dtype='bool')
+            maskSel = np.where(np.isnan(imgData) == True)
+            imgMask[maskSel] = True
+
+
         ## fit polynomial 2D model
         # crete x, y points
         y, x = np.mgrid[:imgData.shape[0],:imgData.shape[1]]
         
+        # if want to downsample the image to speed up fitting, peform downsampling
+        if downSample is not None:
+            # make sure is an integer
+            downFactor = int(downSample)
+
+            # get dimensions
+            dimen = imgData.shape
+
+            # see where the offset in image is to downsample (so edges are even)
+            offset_x = dimen[1] % downFactor // 2
+            offset_y = dimen[0] % downFactor // 2
+
+            # create estimator object depending on median or mean
+            if downMethod == 'median':
+                estimator = np.nanmedian
+            elif downMethod == "mean":
+                estimator = np.nanmean
+            
+            # create downsampled image
+            down_img = estimator(np.dstack([imgData[offset_y+i+(downFactor-1)//2:offset_y+i+(downFactor-1)//2+dimen[0]//downFactor*downFactor:downFactor, offset_x+j+(downFactor-1)//2:offset_x+j+(downFactor-1)//2+dimen[1]//downFactor*downFactor:downFactor] for i in range(-((downFactor-1)//2),(downFactor+1+1)//2) for j in range(-((downFactor-1)//2),(downFactor+1+1)//2)]),axis=2)
+
+            # create coordinate grids which use same coordinate system as original image
+            down_x = x[offset_y+(downFactor-1)//2:dimen[0]-offset_y:downFactor, offset_x+(downFactor-1)//2:dimen[1]-offset_x:downFactor]
+            down_y = y[offset_y+(downFactor-1)//2:dimen[0]-offset_y:downFactor, offset_x+(downFactor-1)//2:dimen[1]-offset_x:downFactor]
+            # if downFactor even account by adding 0.5
+            if (downFactor + 1) % 2 == 1:
+                down_x += 0.5
+                down_y += 0.5
+            
+        else:
+            down_x = x
+            down_y = y
+            down_img = imgData
+
         # initiate fitter
         mod_init = Polynomial2D(degree=polyOrder)
         fitMod = astropyFitter.LevMarLSQFitter()
 
         # select non-nan pixels
-        nonNaN = np.where(np.isnan(imgData) == False)
+        nonNaN = np.where(np.isnan(down_img) == False)
 
         # perform fit
-        pfit = fitMod(mod_init, x[nonNaN], y[nonNaN], imgData[nonNaN])
+        pfit = fitMod(mod_init, down_x[nonNaN], down_y[nonNaN], down_img[nonNaN])
 
-        # create 2D polynomial image
+        # create 2D polynomial image for full image
         backPoly = pfit(x,y)
 
         # subtract from image
-        self.image = self.image - backPoly
+        if apply:
+            self.image = self.image - backPoly
+            if returnMask:
+                return imgMask
+            else:
+                return
+        else:
+            if returnMask:
+                return backPoly, imgMask
+            else:
+                return backPoly
 
-        return
+    ###############################################################################################################
+
+    def generateMaskFromRegions(self, regions, parallelMask=False):
+        # function to generate mask from a list of regions (from region package)
+
+        # check is in correct format
+        if isinstance(regions,(list,tuple)) or str(regions.__class__).count("regions.shapes") > 0:
+            print("Making mask based on data provided")
+        else:
+            raise Exception("Regions not provided as input")
+
+        # if running parallel make sure module loaded
+        if parallelMask:
+            import multiprocessing as mp
+
+        # if only one region provided embed in list
+        if str(regions.__class__).count("regions.shapes") > 0:
+            regions = [regions]
+        
+        # create mask
+        imgMask = np.zeros(self.image.shape)
+        
+        # create blank wcs
+        imgWCS = None
+        try:
+            # create image WCS
+            imgWCS = wcs.WCS(self.header)
+        except:
+            pass
+                        
+        # see if running mask making in parallel
+        if parallelMask:
+            # get number of threads
+            nthread = mp.cpu_count()
+
+            # create pool
+            pool = mp.Pool(processes=nthread)
+            
+            # see how big to make blocks to split
+            chunkSize = len(regions)//nthread
+
+            # calculate the indexes each chunk size is
+            indexes = []
+            for i in range(0,nthread):
+                if i == nthread - 1:
+                    indexes.append([i*chunkSize,len(regions)])
+                else:
+                    indexes.append([i*chunkSize,(i+1)*chunkSize])
+
+            # create list to catch multiprocessing outputs
+            output_list = []
+
+            # loop over each chunk and run masking
+            for i in range(0,nthread):
+                outputs = pool.apply_async(regionsToMask, args=(regions[indexes[i][0]:indexes[i][1]], imgWCS, self.image.shape))
+                output_list.append(outputs)
+            
+            # get outputs and combine mask
+            for output in output_list:
+                imgMask[output.get() > 0] = 1
+
+            # close pool
+            pool.close()
+            pool.join()
+        else:
+            # run mask
+            tempMask = regionsToMask(regions, imgWCS, self.image.shape)
+                
+            imgMask[tempMask > 0] = 1
+
+        # convert mask to boolean
+        imgMask = np.array(imgMask, dtype='bool')
+
+        return imgMask
 
     ###############################################################################################################
     
@@ -2158,7 +2227,7 @@ class astroImage(object):
     
     ###############################################################################################################
 
-    def pixelRadius(self, coordinate, major=None, minor=None, axisRatio=None, inclin=None, PA=None):
+    def pixelRadius(self, coordinate, major=None, minor=None, axisRatio=None, inclin=None, PA=None, specificPixels=None):
         
         # create blank radius map
         radMap = np.zeros(self.image.shape)
@@ -2171,17 +2240,53 @@ class astroImage(object):
         if hasattr(self, "pixSize") is False:
             self.getPixelScale()
         
-        # Make array of x and y for every pixel on map
-        xpix = np.zeros(radMap.shape,dtype=int)
-        for i in range(0,radMap.shape[1]):
-            xpix[:,i] = i
-        ypix = np.zeros(radMap.shape,dtype=int)
-        for i in range(0,int(radMap.shape[0])):
-            ypix[i,:] = i
-    
-        
+        if specificPixels is None:
+            # Make array of x and y for every pixel on map
+            xpix = np.zeros(radMap.shape,dtype=int)
+            for i in range(0,radMap.shape[1]):
+                xpix[:,i] = i
+            ypix = np.zeros(radMap.shape,dtype=int)
+            for i in range(0,int(radMap.shape[0])):
+                ypix[i,:] = i
+        else:
+            
+            # check correct format could be (X, Y), or ((X1,Y1), (X2,Y2)) in list, tuple or array format
+            if isinstance(specificPixels, np.ndarray):
+                if specificPixels.ndim != 2:
+                    raise Exception("Correct Number of Dimensions Not Specified")
+                
+                if specificPixels.shape[1] != 2:
+                    raise Exception("specificPixels does not have the correct dimensions")
+
+                # create empty array
+                xpix = np.zeros((specificPixels.shape[0]))
+                ypix = np.zeros((specificPixels.shape[0]))
+
+                # create x and y pix
+                for i in range(0,specificPixels.shape[0]):
+                    xpix[i] = specificPixels[i,0]
+                    ypix[i] = specificPixels[i,1]
+                
+            # add in list or tuple case
+            elif isinstance(specificPixels, (tuple,list)):
+                xpix = np.zeros((len(specificPixels)))
+                ypix = np.zeros((len(specificPixels)))
+                for i in range(0,len(specificPixels)):
+                    # check the element is a 2D array
+                    if isinstance(specificPixels[i], (tuple,list)):
+                        if len(specificPixels[i]) != 2:
+                            raise Exception("specificPixels has wrong format")
+                    elif isinstance(specificPixels[i], np.ndarray):
+                        if specificPixels[i].ndim != 1 and specificPixels[i].shape[0] != 2:
+                            raise Exception("specificPixels has wrong format")
+                    
+                    # create x and y pix
+                    xpix[i] = specificPixels[i][0]
+                    ypix[i] = specificPixels[i][1]
+
+
         # Convert all pixels into sky co-ordinates
-        sky = wcsInfo.pixel_to_world(xpix,ypix)
+        #sky = wcsInfo.pixel_to_world(xpix,ypix)
     
         # get centre
         from astropy.coordinates import SkyCoord
@@ -3362,13 +3467,26 @@ class astroImage(object):
 
     ###########################################################################################################
 
-    def interactivePlot(self, recentre=None, stretch='linear', vmin=None, vmid=None, vmax=None, cmap=None, facecolour='white', nancolour='black', hide_colourbar=False, save=None):
+    def interactivePlot(self, recentre=None, stretch='linear', vmin=None, vmid=None, vmax=None, cmap=None):
         # function to make a quick plot of the data using matplotlib and aplpy
         
         # import modules
         import aplpy
         import matplotlib.pyplot as plt
+        from matplotlib.widgets import RangeSlider
+        from matplotlib.widgets import RadioButtons
         
+        def updateClim(val):
+            # Update plot if slider is changed
+            # The val passed to a callback by the RangeSlider will
+            # be a tuple of (min, max)
+
+            # Update the image's colormap
+            f1.image.set_clim((val[0],val[1]))
+
+            # Redraw the figure to ensure it updates
+            fig.canvas.draw_idle()
+
         # create figure
         fig = plt.figure(figsize=(12,6))
         
@@ -3379,7 +3497,8 @@ class astroImage(object):
         hdu = pyfits.PrimaryHDU(self.image, self.header)
         
         # create aplpy axes
-        f1 = aplpy.FITSFigure(hdu, figure=fig, subplot=[0.05,0.05,0.45,0.9])
+        axesLocation = [0.07,0.13,0.40,0.80]
+        f1 = aplpy.FITSFigure(hdu, figure=fig, subplot=axesLocation)
         
         # if doing a log stretch find vmax, vmid, vmin
         if stretch == "log":
@@ -3410,10 +3529,10 @@ class astroImage(object):
         
         # apply colourscale
         f1.show_colorscale(stretch=stretch, cmap=cmap, vmin=vmin, vmax=vmax, vmid=vmid)
-        
+
         # set nan colour to black, and face
-        f1.set_nan_color(nancolour)
-        f1.ax.set_facecolor(facecolour)
+        f1.set_nan_color('black')
+        f1.ax.set_facecolor('white')
         
         # recentre image
         if recentre is not None:
@@ -3457,16 +3576,41 @@ class astroImage(object):
                     print("Cannot recentre as no size information identified")
         
         # add colorbar
-        if hide_colourbar is False:
-            f1.add_colorbar()
-            f1.colorbar.show()
-            if hasattr(self, 'unit'):
-                f1.colorbar.set_axis_label_text(self.unit)
+        f1.add_colorbar()
+        f1.colorbar.show()
+        if hasattr(self, 'unit'):
+            f1.colorbar.set_axis_label_text(self.unit)
         
-        # save plot if desired
-        if save is not None:
-            plt.savefig(save)
-        
+        # set axis to be adjustable
+        #f1.ax.set_adjustable('box', share=True)
+
+        # set start pix 
+        f1.show_markers(-1,-1, coords_frame='pixel', marker="+", c='white')
+
+        # get initial colour scale limits
+        initialClim = f1.image.get_clim()
+
+        # create range slider
+        sliderLoc = [axesLocation[0]+0.005, axesLocation[1]-0.12, axesLocation[2]-0.083, 0.05]
+        slider_ax = plt.axes(sliderLoc)
+        slider = RangeSlider(slider_ax, "", valmin=np.nanmin(self.image), valmax=np.nanmax(self.image), valinit=initialClim)
+        slider.on_changed(updateClim)
+        fig.text(axesLocation[0], axesLocation[1]-0.07, "Scalebar", fontsize=10)
+
+        ### create pixel infomation box
+        # labels
+        leftInfoBorder = 0.52
+        fig.text(leftInfoBorder, 0.89, "Pixel Information", fontsize=12)
+        fig.text(leftInfoBorder+0.02, 0.86, "Marker", fontsize=10)
+
+        # turn marker on/off
+        markerAx = plt.axes([leftInfoBorder+0.0, 0.82, 0.04,0.12])
+        markerButton = RadioButtons(markerAx, ('On', 'Off'), activecolor='C0')
+        markerButton.ax.set_frame_on(False)
+        #markerButton.on_clicked(scaleAdjust)
+
+
+
         plt.show()
 
     ###########################################################################################################
@@ -3557,7 +3701,113 @@ def multiPowerSpectraPlot(images, units=None, matchProjection=False, refImage=0,
 
     return
 
+##############################################################################################################
+###############################################################################################################        
 ###############################################################################################################
+
+### Functions for interactive plot ###
+
+def clickEvent(e):
+    # function to click on either masSB, temperature or beta map
+    # moves marker and updates plot
+    
+    # see if click in axis
+    if e.inaxes == fMass.ax or e.inaxes == fTemp.ax:
+        inAxes = True
+    elif varyBeta and e.inaxes == fBeta.ax:
+        inAxes = True
+    else:
+        inAxes = False
+    
+    if inAxes:
+        # get xdata and ydata
+        if e.xdata is not None and e.ydata is not None:
+            
+            # calculate pixel coordinates
+            # create pixel coordinates, and work out SEDlabel for pickle
+            pixCoordinates = [int(np.round(e.xdata))+1,int(np.round(e.ydata))+1]
+            SEDLabel =  f"{objectID}_{int(np.round(e.xdata))+1}x{int(np.round(e.ydata))+1}"
+            print(f'Selecting pixel: {int(np.round(e.xdata))+1}x{int(np.round(e.ydata))+1}')
+            
+            # move marker on fits images
+            fMass._layers['marker_set_1'].set_offsets((int(np.round(e.xdata))+1,int(np.round(e.ydata))+1))
+            fTemp._layers['marker_set_1'].set_offsets((int(np.round(e.xdata))+1,int(np.round(e.ydata))+1))
+            if varyBeta:
+                fBeta._layers['marker_set_1'].set_offsets((int(np.round(e.xdata))+1,int(np.round(e.ydata))+1))
+            
+            # see if SED fit exists for pixel
+            if SEDLabel in SEDresults:
+                # get SED for this pixel
+                compData, totalModelData, dataPoints, scaleLims, info, yUnit = SEDmodel(SEDresults[SEDLabel][model]['inputData'], SEDresults[SEDLabel][model]['model'], SEDresults[SEDLabel][model]['model']['kappa'], includeColourCorrect, ccInfo, SEDresults[SEDLabel][model]['result'], SEDLabel, model)
+        
+                ### update SED plot
+                # plot components
+                for i in range(0,len(compData)):
+                    compPlot[i][0].set_xdata(compData[i]['x'])
+                    compPlot[i][0].set_ydata(compData[i]['y'])
+                    
+                # update datapoints
+                for i in range(0,3):
+                    if dataPoints[i] is not None:
+                        update_errorbar(dataPlot[i], dataPoints[i]['x'], dataPoints[i]['y'], yerr=dataPoints[i]['e'])
+                    else:
+                        dataPlot[i][0].set_data(None,None)
+                
+                # update total model plot
+                totalModelPlot[0].set_xdata(totalModelData['x'])
+                totalModelPlot[0].set_ydata(totalModelData['y'])
+        
+                # set scale limits        
+                fSED.set_xlim(scaleLims['x'][0],scaleLims['x'][1])
+                fSED.set_ylim(scaleLims['y'][0],scaleLims['y'][1])
+        
+                # update labels
+                figPixText.set_text(f"{objectID} - Pixel: {pixCoordinates[0]} x {pixCoordinates[1]}")
+                figSEDText.set_text(info)
+            else:
+                # plot components
+                for i in range(0,len(compPlot)):
+                    compPlot[i][0].set_xdata(None)
+                    compPlot[i][0].set_ydata(None)
+                
+                # update datapoints
+                for i in range(0,3):
+                    try:
+                        dataPlot[i][0].set_data(None,None)
+                    except:
+                        pass
+                    for j in range(0,2):
+                        try:
+                            dataPlot[i][1][j].set_xdata(None)
+                        except:
+                            pass
+                        try:
+                            dataPlot[i][1][j].set_ydata(None)
+                        except:
+                            pass
+                    try:
+                        dataPlot[i][2][0].set_segments(np.array([]))
+                    except:
+                        pass
+                    
+                # update total model plot
+                totalModelPlot[0].set_xdata(None)
+                totalModelPlot[0].set_ydata(None)
+                
+                # update labels
+                figPixText.set_text(f"{objectID} - Pixel: {pixCoordinates[0]} x {pixCoordinates[1]}")
+                figSEDText.set_text("No SED fit for this pixel.")
+            
+            # redraw plot
+            plt.draw()
+
+###############################################################################################################
+
+
+##############################################################################################################
+###############################################################################################################        
+###############################################################################################################
+
 
 # create function which loads in colour-corrections
 def loadColourCorrect(colFile, SPIREtype):
@@ -3610,3 +3860,28 @@ def loadColourCorrect(colFile, SPIREtype):
     
     # return colour correction information
     return newCCinfo
+
+###############################################################################################################
+
+# Function that can do mask processing - sepearte so can run in parallel (has to be outside class)
+def regionsToMask(mask, imgWCS, shape):
+    threadMask = np.zeros(shape)
+    for i in range(0,len(mask)):
+        
+        # if sky region convert to a pixel region
+        if hasattr(mask[i],'to_pixel'):
+            # convert to pixel mask
+            mask[i] = mask[i].to_pixel(imgWCS)
+        
+        # create individual mask
+        tempMask = mask[i].to_mask(mode='center')
+
+        imgRegion = tempMask.to_image(shape)
+        
+        # see if region is empty (i.e., no overlap)
+        if imgRegion is None:
+            continue
+        
+        #imgMask = imgMask + imgRegion
+        threadMask[imgRegion > 0] = 1
+    return threadMask
