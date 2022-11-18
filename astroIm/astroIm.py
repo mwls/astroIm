@@ -508,7 +508,7 @@ class astroImage(object):
         # function to get pixel size
         WCSinfo = wcs.WCS(self.header)
         pixSizes = wcs.utils.proj_plane_pixel_scales(WCSinfo)*3600.0
-        if np.abs(pixSizes[0]-pixSizes[1]) > 0.0001:
+        if np.abs(pixSizes[0]-pixSizes[1]) > 0.0002:
             raise ValueError("PANIC - program does not cope with non-square pixels")
         self.pixSize = round(pixSizes[0], 6) * u.arcsecond
         return round(pixSizes[0], 6)
