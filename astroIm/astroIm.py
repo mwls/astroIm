@@ -2908,8 +2908,9 @@ class astroImage(object):
         # projection keywords
         projKeywords = ["NAXIS1", "NAXIS2", "LBOUND1", "LBOUND2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2",\
                         "CTYPE1", "CTYPE2", "CDELT1", "CDELT2", "CD1_1", "CD1_2", "CD2_1", "CD2_2",\
-                        "RADESYS", "EQUINOX", "CROTA2", "CROTA1"]
+                        "RADESYS", "EQUINOX", "CROTA2", "CROTA1", "LONPOLE", "LATPOLE"]
         header = self.header.copy()
+        
         for keyword in projKeywords:
             if keyword in projHead:
                 header[keyword] = projHead[keyword]
