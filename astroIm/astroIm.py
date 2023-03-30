@@ -147,9 +147,11 @@ class astroImage(object):
                 if keyword in self.header and isinstance(self.header[keyword],str):
                     info = self.header[keyword].split("/")
                     if keyword == "SIGUNIT":
-
-                        if self.header[keyword][0:10].count(" / ") > 0:
-                            self.header[keyword] = (info[0]+"/"+info[1],info[2])
+                        info2 = self.header[keyword].split("/ Unit of the map")
+                        if len(info2) > 1:
+                            self.header[keyword] = (info2[0],"Unit of the map")
+                        else:
+                            self.header[keyword] = info2[0]
                     else:
                         self.header[keyword] = (info[0], info[1])    
 
