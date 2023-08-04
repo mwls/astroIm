@@ -321,7 +321,8 @@ class astroImage(object):
                 self.fwhm = FWHM * u.arcsecond
         else:
             try:
-                self.fwhm = self.standardFWHM(self.instrument, self.band)
+                if self.instrument is not None and self.band is not None:
+                    self.fwhm = self.standardFWHM(self.instrument, self.band)
             except:
                 pass
         

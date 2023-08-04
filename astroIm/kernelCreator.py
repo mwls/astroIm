@@ -6,16 +6,18 @@ import numpy as np
 import warnings
 import time
 import copy
+from astroIm import astroImage
+import astropy.units as u
 
 # create a PSF class that is the same as astro image but has a few additional methods
 class psfImage(astroImage):
     # initialise object either based on the input image or astroImage call 
-    def __init__(self, imageIn, makeOdd=False, centrePeak=False, fft=False, ext=0, telescope=None, instrument=None, band=None, unit=None, load=True, FWHM=None, slices=None, dustpediaHeaderCorrect=None)
+    def __init__(self, imageIn, makeOdd=False, centrePeak=False, fft=False, ext=0, telescope=None, instrument=None, band=None, unit=None, load=True, FWHM=None, slices=None, dustpediaHeaderCorrect=None):
         # if already is an astroImage object can skip loading, else need to load
         if isinstance(imageIn, astroImage):
             self.__dict__.update(imageIn.__dict__)
         else:
-            super().__init__(imageIn, ext=0, telescope=None, instrument=None, band=None, unit=None, load=True, FWHM=None, slices=None, dustpediaHeaderCorrect=None)
+            super().__init__(imageIn, ext, telescope=telescope, instrument=instrument, band=band, unit=unit, load=load, FWHM=FWHM, slices=slices, dustpediaHeaderCorrect=dustpediaHeaderCorrect)
 
         # convert to square image if rectangular
         if self.image.shape[0] != self.image.shape[1]:
@@ -136,9 +138,9 @@ class psfImage(astroImage):
 
         # force odd-sized array
         if forceOdd:
-            if resamplePSF[0] %2 == 0:
+            if resamplePSF.shape[0] %2 == 0:
                 resamplePSF = resamplePSF[0:resamplePSF.shape[0]-1,:]
-            if resamplePSF[1] %2 == 0:
+            if resamplePSF.shape[1] %2 == 0:
                 resamplePSF = resamplePSF[:,0:resamplePSF.shape[1]-1]
             
         ## update the object
@@ -175,7 +177,7 @@ class psfImage(astroImage):
         psf_max = psf_smooth[psf_smooth.shape[0]//4:3*psf_smooth.shape[0]//4,psf_smooth.shape[1]//4:3*psf_smooth.shape[1]//4].max()
 
         # find pixels close in value to the maximum
-        sel = np.where(psf_max-psf_smooth < pixThreshold)
+        sel = np.where((psf_max-psf_smooth)/psf_max < pixThreshold)
 
         # set up variables
         x_centroid = 0
@@ -208,11 +210,21 @@ class psfImage(astroImage):
 
         return
 
-    def circulisePSF(self, rotations=14, polyOrder=3, fourierSpacing=False):
+    def circulisePSF(self, rotations=14, polyOrder=3, fourierSpacing=None):
         # function to rotate the PSF and take an interative average each time
 
         # import scipt rotate function
         from scipy.ndimage import rotate
+
+        # decide how rotating
+        if fourierSpacing is None:
+            if hasattr(self,'fft'):
+                if self.fft:
+                    fourierSpacing = True
+                else:
+                    fourierSpacing = False
+            else:
+                raise Exception("fourierSpacing must be defined for PSF image, if state unknown")           
 
         # calculate angles
         if fourierSpacing:
@@ -226,6 +238,7 @@ class psfImage(astroImage):
         # rotate and add psf
         for i in range(0,len(angles)):
             # rotate image
+            print(i)
             rotPSF = rotate(self.image, angles[i], order=polyOrder, reshape=False)
 
             # add to new image
@@ -248,6 +261,9 @@ class psfImage(astroImage):
     def createFourierTransformPSF(self):
         # function that outputs a fourier transform version of the PSF
 
+        # import module
+        import astropy.io.fits as pyfits
+
         # fourier transform the image
         psf_FFT = np.real(np.fft.fft2(np.fft.ifftshift(self.image)))
 
@@ -260,7 +276,7 @@ class psfImage(astroImage):
         fftHdulist = pyfits.HDUList([fftHdu])
         
         # create combine astro image
-        fftPSFobj = psfImage(fftHdulist, fft=True)
+        fftPSFobj = psfImage(fftHdulist, fft=True, load=False)
 
         return fftPSFobj
     
@@ -279,7 +295,7 @@ class psfImage(astroImage):
         newHdulist = pyfits.HDUList([newHdu])
         
         # create combine astro image
-        psfObj = psfImage(newHdulist, fft=False)
+        psfObj = psfImage(newHdulist, fft=False, load=False)
 
         return psfObj
         
@@ -412,8 +428,8 @@ def createPSFkernel(hiresPSF, lowresPSF, outputPixelSize=0.2*u.arcsec, operating
 
     # circularise the FFTs
     print("Circulising PSFs FFTs")
-    hiresPSF_FFT = circuliseFFT(hiresPSF_FFT)
-    lowresPSF_FFT = circuliseFFT(lowresPSF_FFT)
+    hiresPSF_FFT.circulisePSF()
+    lowresPSF_FFT.circulisePSF()
 
     # highpass filter the PSFs
     print("Highpass filtering PSFs")
