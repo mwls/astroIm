@@ -21,7 +21,7 @@ warnings.filterwarnings("ignore")
 import astropy.units as u
 import copy
 import pickle
-
+from astroIm import astroImage
 
 # PPMAP cube class
 class ppmapCube(object):
