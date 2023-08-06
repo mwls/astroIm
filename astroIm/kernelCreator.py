@@ -104,6 +104,70 @@ class psfImage(astroImage):
 
         return
     
+    # function to remove zero edges from the PSF
+    def removeZeroEdges(self, minPadding=1):
+        # calculate indicies to loop over
+        startI = 0
+        endI = np.array(self.image.shape).min() // 2
+
+        # loop progressively inwards
+        zeroPadding = 0
+        for i in range(startI,endI):
+            # check if any non-zero pixels
+            if np.sum(self.image[i,:]) == 0.0 and np.sum(self.image[self.image.shape[0]-1-i,:]) == 0.0 and np.sum(self.image[:,i]) == 0.0 and np.sum(self.image[:,self.image.shape[1]-1-i]) == 0.0:
+                zeroPadding = i + 1
+                continue
+            else:
+                # if not all zero then break
+                break
+        
+        # calculate number of rows/columns to remove
+        if zeroPadding - minPadding > 0:
+            nRemove = zeroPadding - minPadding
+
+            # adjust image size and header
+            self.image = self.image[nRemove:-nRemove,nRemove:-nRemove]
+            self.header['NAXIS1'] = self.image.shape[1]
+            self.header['NAXIS2'] = self.image.shape[0]
+            self.header['CRPIX1'] = self.header['CRPIX1'] - nRemove
+            self.header['CRPIX2'] = self.header['CRPIX2'] - nRemove
+
+        return
+    
+    # function to add zero edges for padding
+    def zeroPad(self, newShape):
+        # if new shape is only one dimension or float create a 2D array
+        if isinstance(newShape, list) or isinstance(newShape, np.ndarray) or isinstance(newShape, tuple):
+            pass
+        else:
+            newShape = np.array([newShape,newShape])
+
+        # check if new shape is larger than current shape
+        if newShape[0] < self.image.shape[0] or newShape[1] < self.image.shape[1]:
+            raise Exception("New shape must be larger than current shape")
+        
+        # check if padding is even on both sides
+        if (newShape[0] - self.image.shape[0]) %2 == 1 or (newShape[1] - self.image.shape[1]) %2 == 1:
+            raise Exception("Difference in sizes must be even so same on both sides")
+        
+        # calculate padding
+        nPadY = (newShape[0] - self.image.shape[0])//2
+        nPadX = (newShape[1] - self.image.shape[1])//2
+
+        # create new image
+        newImage = np.zeros(newShape)
+
+        # put in current image
+        newImage[nPadY:nPadY+self.image.shape[0],nPadX:nPadX+self.image.shape[1]] = self.image
+
+        # update image and header
+        self.image = newImage
+        self.header['NAXIS1'] = self.image.shape[1]
+        self.header['NAXIS2'] = self.image.shape[0]
+        self.header['CRPIX1'] = self.header['CRPIX1'] + nPadX
+        self.header['CRPIX2'] = self.header['CRPIX2'] + nPadY
+
+        return
 
     # function to normalise the image
     def normalisePSF(self, normalisePeak=False):
@@ -213,7 +277,7 @@ class psfImage(astroImage):
     def circulisePSF(self, rotations=14, polyOrder=3, fourierSpacing=None):
         # function to rotate the PSF and take an interative average each time
 
-        # import scipt rotate function
+        # import scipy rotate function
         from scipy.ndimage import rotate
 
         # decide how rotating
@@ -249,10 +313,14 @@ class psfImage(astroImage):
 
         # set anything outside the maximum radius contained within the whole square to be 0
         radius = np.min(newPSF.shape) / 2
-        for i in range(0,newPSF.shape[0]):
-            for j in range(0,newPSF.shape[1]):
-                if (i-(newPSF.shape[0]+1)/2-1)**2 + (j-(newPSF.shape[1]+1)/2-1)**2 > radius**2:
-                    newPSF[i,j] = 0.0
+        xx, yy = np.meshgrid(np.arange(0,newPSF.shape[1]), np.arange(0,newPSF.shape[0]))
+        sel = np.where((xx-(newPSF.shape[1]+1)/2-1)**2 + (yy-(newPSF.shape[0]+1)/2-1)**2 > radius**2)
+        newPSF[sel] = 0.0
+
+        #for i in range(0,newPSF.shape[0]):
+        #    for j in range(0,newPSF.shape[1]):
+        #        if (i-(newPSF.shape[0]+1)/2-1)**2 + (j-(newPSF.shape[1]+1)/2-1)**2 > radius**2:
+        #            newPSF[i,j] = 0.0
 
         self.image = newPSF
 
@@ -271,12 +339,11 @@ class psfImage(astroImage):
         psf_FFT = np.fft.fftshift(psf_FFT)
 
         # create new astroImage PSF object
-        fftHeader = self.header
-        fftHdu = pyfits.PrimaryHDU(psf_FFT, fftHeader)
-        fftHdulist = pyfits.HDUList([fftHdu])
+        fftPSFobj = copy.deepcopy(self)
+        fftPSFobj.image = psf_FFT
         
-        # create combine astro image
-        fftPSFobj = psfImage(fftHdulist, fft=True, load=False)
+        # set the FFT keyword
+        fftPSFobj.fft = True
 
         return fftPSFobj
     
@@ -290,12 +357,11 @@ class psfImage(astroImage):
         newPsf = np.fft.fftshift(np.real(np.fft.ifft2(psf_FFT)))
 
         # create new astroImage PSF object
-        newheader = self.header
-        newHdu = pyfits.PrimaryHDU(newPsf, newHeader)
-        newHdulist = pyfits.HDUList([newHdu])
-        
-        # create combine astro image
-        psfObj = psfImage(newHdulist, fft=False, load=False)
+        psfObj = copy.deepcopy(self)
+        psfObj.image = newPsf
+
+        # set the FFT keyword
+        psfObj.fft = False
 
         return psfObj
         
@@ -307,27 +373,27 @@ class psfImage(astroImage):
             raise Exception("PSF must be Fourier transformed to highpass filter")
         
         # must know FWHM information
-        if hasattr(self,'FWHM') is False:
+        if hasattr(self,'fwhm') is False:
             raise Exception("FWHM must be defined for PSF image")
         
         # create radius in arcsecond from centre for all pixels
-        x_centre,y_centre = hires.shape[0]/2.0,hires.shape[1]/2.0
-        x,y = np.meshgrid(np.linspace(-x_centre,x_centre,hires.shape[0]), 
-                           np.linspace(-y_centre,y_centre,hires.shape[1]))
+        x_centre,y_centre = self.image.shape[0]/2.0,self.image.shape[1]/2.0
+        x,y = np.meshgrid(np.linspace(-x_centre,x_centre,self.image.shape[0]), 
+                           np.linspace(-y_centre,y_centre,self.image.shape[1]))
         
         d = np.sqrt(x*x+y*y)
         d = np.transpose(d)
         d *= self.pixSize.to(u.arcsecond).value
         
         # Calculate the frequencies in the Fourier plane to create a filter
-        x_f,y_f = np.meshgrid(np.fft.fftfreq(hires.shape[0],self.pixSize.to(u.arcsecond).value),
-                              np.fft.fftfreq(hires.shape[1],self.pixSize.to(u.arcsecond).value))
+        x_f,y_f = np.meshgrid(np.fft.fftfreq(self.image.shape[0],self.pixSize.to(u.arcsecond).value),
+                              np.fft.fftfreq(self.image.shape[1],self.pixSize.to(u.arcsecond).value))
         #d_f = np.sqrt(x_f**2 + y_f**2) *2.0#Factor of 2 due to Nyquist sampling
         d_f = np.sqrt(x_f**2 + y_f**2)
         d_f = np.transpose(d_f)
 
         # define the filter parameters
-        k_b = 8 * np.pi/(fwhm.to(u.arcsecond).value)
+        k_b = 8 * np.pi/(self.fwhm.to(u.arcsecond).value)
         k_a = 0.9 * k_b
 
         # apply the filter
@@ -346,7 +412,7 @@ class psfImage(astroImage):
             raise Exception("PSF must be Fourier transformed to lowpass filter")
         
         # find where maximum power is
-        source_fourier_data = psf[int(x_range/2):-1,int(y_range/2)]
+        source_fourier_data = self.image[int(self.image.shape[0]/2):-1,int(self.image.shape[1]/2)]
         fft_max = np.amax(source_fourier_data)
 
         # find scale need to go to
@@ -359,17 +425,17 @@ class psfImage(astroImage):
         k_l = 0.7 * k_h
         
         # create radius in arcsecond from centre for all pixels
-        x_centre,y_centre = hires.shape[0]/2.0,hires.shape[1]/2.0
-        x,y = np.meshgrid(np.linspace(-x_centre,x_centre,hires.shape[0]), 
-                           np.linspace(-y_centre,y_centre,hires.shape[1]))
+        x_centre,y_centre = self.image.shape[0]/2.0,self.image.shape[1]/2.0
+        x,y = np.meshgrid(np.linspace(-x_centre,x_centre,self.image.shape[0]), 
+                           np.linspace(-y_centre,y_centre,self.image.shape[1]))
         
         d = np.sqrt(x*x+y*y)
         d = np.transpose(d)
         d *= self.pixSize.to(u.arcsecond).value
         
         # Calculate the frequencies in the Fourier plane to create a filter
-        x_f,y_f = np.meshgrid(np.fft.fftfreq(hires.shape[0],self.pixSize.to(u.arcsecond).value),
-                              np.fft.fftfreq(hires.shape[1],self.pixSize.to(u.arcsecond).value))
+        x_f,y_f = np.meshgrid(np.fft.fftfreq(self.image.shape[0],self.pixSize.to(u.arcsecond).value),
+                              np.fft.fftfreq(self.image.shape[1],self.pixSize.to(u.arcsecond).value))
         #d_f = np.sqrt(x_f**2 + y_f**2) *2.0#Factor of 2 due to Nyquist sampling
         d_f = np.sqrt(x_f**2 + y_f**2)
         d_f = np.transpose(d_f)
@@ -377,14 +443,14 @@ class psfImage(astroImage):
         lowPassFilter = np.ones(self.image.shape)
         # apply the filter
         sel = np.where(d_f > k_h)
-        lowPassFilter.image[sel] = 0.0
+        lowPassFilter[sel] = 0.0
         sel = np.where((d_f >= k_l) & (d_f <= k_h))
-        lowPassFilter.image[sel] = 0.5*(1+np.cos(np.pi*(d_f[sel]-k_l)/(k_h-k_l)))
+        lowPassFilter[sel] = 0.5*(1+np.cos(np.pi*(d_f[sel]-k_l)/(k_h-k_l)))
 
         return lowPassFilter
 
 # master function to create PSF kernel
-def createPSFkernel(hiresPSF, lowresPSF, outputPixelSize=0.2*u.arcsec, operatingPixelSize=0.2*u.arcsec, circulisePSFs=False, verbose=True, returnOperatingKernel=False):
+def createPSFkernel(hiresPSF, lowresPSF, outputPixelSize=0.2*u.arcsec, operatingPixelSize=0.2*u.arcsec, circulisePSFs=False, maxSize=None, verbose=True, returnOperatingKernel=False):
     # check if PSFs are astroImage objects
     if isinstance(hiresPSF, psfImage) is False:
         raise Exception("hiresPSF is not an astroImage PSF object")
@@ -407,6 +473,28 @@ def createPSFkernel(hiresPSF, lowresPSF, outputPixelSize=0.2*u.arcsec, operating
     hiresPSF.resamplePSF(operatingPixelSize)
     lowresPSF.resamplePSF(operatingPixelSize)
     
+    # Make sure both kernels are the same size
+    if verbose:
+        print("Optimising and matching size of the PSFs")
+
+    # see if extra zeros could be culled from the edges
+    hiresPSF.removeZeroEdges()
+    lowresPSF.removeZeroEdges()
+
+    if maxSize is not None:
+        raise Exception("Max Size is not implemented yet")
+    
+    # check if sizes are the same:
+    if hiresPSF.image.shape != lowresPSF.image.shape:
+        # see which is larger and zero pad the smaller one
+        if hiresPSF.image.shape[0] > lowresPSF.image.shape[0] and hiresPSF.image.shape[1] > lowresPSF.image.shape[1]:
+            lowresPSF.zeroPad(hiresPSF.image.shape)
+        elif hiresPSF.image.shape[0] < lowresPSF.image.shape[0] and hiresPSF.image.shape[1] < lowresPSF.image.shape[1]:
+            hiresPSF.zeroPad(lowresPSF.image.shape)
+        else:
+            newSize = np.array([np.max([hiresPSF.image.shape[0],lowresPSF.image.shape[0]]),np.max([hiresPSF.image.shape[1],lowresPSF.image.shape[1]])])
+            hiresPSF.zeroPad(newSize)
+            lowresPSF.zeroPad(newSize)
 
     # centroid the PSFs
     if verbose:
@@ -444,7 +532,7 @@ def createPSFkernel(hiresPSF, lowresPSF, outputPixelSize=0.2*u.arcsec, operating
 
     # lowpass filter the low resolution PSF
     print("Creating Lowpass filter")
-    lowpassFilter = highresPSF_FFT.lowpassFilterPSF()
+    lowpassFilter = hiresPSF_FFT.createLowpassFilterPSF()
 
     # calculate the FT of convolution kernel
     print("Creating FFT of the kernel")
