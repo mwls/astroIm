@@ -2923,13 +2923,19 @@ class astroImage(object):
                 except:
                     pass
         
-        # create reprojected image hdu
-        repoHdu = pyfits.PrimaryHDU(resampleMap, header)
-        repoHdulist = pyfits.HDUList([repoHdu])
+        ## create reprojected image hdu
+        #repoHdu = pyfits.PrimaryHDU(resampleMap, header)
+        #repoHdulist = pyfits.HDUList([repoHdu])
         
-        # create combine astro image
-        repoImage = astroImage(repoHdulist, load=False, instrument=self.instrument, band=self.band)
+        ## create combine astro image
+        #repoImage = astroImage(repoHdulist, load=False, instrument=self.instrument, band=self.band)
         
+        # create new reporjected astro image
+        repoImage = copy.deepcopy(self)
+        repoImage.image = resampleMap
+        repoImage.header = header
+        repoImage.getPixelScale()
+
         if conserveFlux is None:
             if self.unit=="Jy/pix" or self.unit=="mJy/pix":
                 conserveFlux = True
@@ -2944,7 +2950,7 @@ class astroImage(object):
             origPixSize = self.pixSize
             
             # get output pixel size
-            repoImage.getPixelScale()
+            #repoImage.getPixelScale()
             outPixSize = repoImage.pixSize
 
             # adjust image for difference in pixel area
@@ -3016,13 +3022,28 @@ class astroImage(object):
         # restore NaNs
         convolvedArray[NaNsel] = np.nan
         
-        # create combined image hdu
-        convolveHeader = self.header
-        convolveHdu = pyfits.PrimaryHDU(convolvedArray, convolveHeader)
-        convolveHdulist = pyfits.HDUList([convolveHdu])
+        # create new astroImage object
+        convolvedImage = copy.deepcopy(self)
+        convolvedImage.image = convolvedArray
+
+        # update FWHM keyword
+        if hasattr(convolvedImage, 'fwhm'):
+            # if image is provided can't predict output FWHM
+            if isinstance(kernel, type(1.0*u.arcsecond)) is False:
+                del(convolvedImage.fwhm)
+            else:
+                if FWHM:
+                    convolvedImage.fwhm = np.sqrt(self.fwhm**2.0 + kernel**2.0)
+                else:
+                    convolvedImage.fwhm = np.sqrt(self.fwhm**2.0 + (kernel * 2.0*np.sqrt(2.0*np.log(2.0)))**2.0)
+
+        ## create combined image hdu
+        #convolveHeader = self.header
+        #convolveHdu = pyfits.PrimaryHDU(convolvedArray, convolveHeader)
+        #convolveHdulist = pyfits.HDUList([convolveHdu])
         
-        # create combine astro image
-        convolvedImage = astroImage(convolveHdulist, load=False, instrument=self.instrument, band=self.band)
+        ## create combine astro image
+        #convolvedImage = astroImage(convolveHdulist, load=False, instrument=self.instrument, band=self.band)
         
         return convolvedImage
     
@@ -3068,11 +3089,16 @@ class astroImage(object):
             cutHeader[keyword] = cutHeadWCS[keyword]
         
         # create astro image object from output
-        cutoutHdu = pyfits.PrimaryHDU(cutoutOut.data, cutHeader)
-        cutoutHdulist = pyfits.HDUList([cutoutHdu])
+        cutoutImage = copy.deepcopy(self)
+        cutoutImage.image = cutoutOut.data
+        cutoutImage.header = cutHeader
+
+        ## create astro image object from output
+        #cutoutHdu = pyfits.PrimaryHDU(cutoutOut.data, cutHeader)
+        #cutoutHdulist = pyfits.HDUList([cutoutHdu])
         
-        # create combine astro image
-        cutoutImage = astroImage(cutoutHdulist, load=False, instrument=self.instrument, band=self.band)
+        ## create combine astro image
+        #cutoutImage = astroImage(cutoutHdulist, load=False, instrument=self.instrument, band=self.band)
         
         return cutoutImage
 
@@ -3205,20 +3231,26 @@ class astroImage(object):
         # create combined image hdu
         combineHeader = self.header
         combineHeader['INSTRUME'] = self.instrument + '&' + lowresImage.instrument
-        combineHdu = pyfits.PrimaryHDU(combined, combineHeader)
-        combineHdulist = pyfits.HDUList([combineHdu])
         
-        # create combine astro image
-        try:
-            combineImage = astroImage(combineHdulist, load=False)
-        except:
-            combineImage = astroImage(combineHdulist, load=False, band=self.band)
+        # create new combined image
+        combineImage = copy.deepcopy(self)
+        combineImage.image = combined
+        combineImage.header = combineHeader
+
+        #combineHdu = pyfits.PrimaryHDU(combined, combineHeader)
+        #combineHdulist = pyfits.HDUList([combineHdu])
         
-        # copy attributes from high-res image if available
-        if hasattr(self,"fwhm"):
-            combineImage.fwhm = self.fwhm
-        if hasattr(self,"ccData"):
-            combineImage.ccData = self.ccData
+        ## create combine astro image
+        #try:
+        #    combineImage = astroImage(combineHdulist, load=False)
+        #except:
+        #    combineImage = astroImage(combineHdulist, load=False, band=self.band)
+        
+        ## copy attributes from high-res image if available
+        #if hasattr(self,"fwhm"):
+        #    combineImage.fwhm = self.fwhm
+        #if hasattr(self,"ccData"):
+        #    combineImage.ccData = self.ccData
         
         return combineImage
     
