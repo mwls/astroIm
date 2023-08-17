@@ -161,6 +161,25 @@ class psfImage(astroImage):
         else:
             return
     
+    # function to apply a radial mask
+    def radialMask(self, maskRadius, maskValue=0.0):
+        # calculate radius array
+        xx, yy = np.meshgrid(np.arange(0,self.image.shape[1]), np.arange(0,self.image.shape[0]))
+        rad = np.sqrt((xx-((self.image.shape[1]+1)/2-1))**2 + (yy-((self.image.shape[0]+1)/2-1))**2)
+
+        # scale radius map for pixel size
+        if hasattr(self,'pixSize') is False:
+            self.getPixelScale()
+        rad = rad * self.pixSize
+
+        # select where to mask
+        sel = np.where(rad > maskRadius)
+        self.image[sel] = maskValue
+
+        return
+
+        
+
     # function to add zero edges for padding
     def zeroPad(self, newShape):
         # if new shape is only one dimension or float create a 2D array
@@ -527,7 +546,7 @@ class psfImage(astroImage):
         else:
             return
 
-    def reprojectPSF(self, outputPixelSize):    
+    def reprojectPSF(self, outputPixelSize, circulisePSF=True, parallel=False):    
         # function to reproject kernel with a call to standard reproject image 
 
         ## resample kernel to output pixel scale
@@ -557,7 +576,11 @@ class psfImage(astroImage):
         newHeader['CRPIX2'] = (newSize[0] + 1)//2
 
         # perform reprojection
-        reproKernel = self.reproject(newHeader, conserveFlux=True)
+        reproKernel = self.reproject(newHeader, conserveFlux=True, parallel=parallel)
+
+        if circulisePSF:
+            # circulise the PSF
+            reproKernel.circulisePSF()
 
         # Not needed but renomalise
         reproKernel.normalisePSF()
@@ -571,12 +594,26 @@ class psfImage(astroImage):
         xx, yy = np.meshgrid(np.arange(0,self.image.shape[1]), np.arange(0,self.image.shape[0]))
         rad = np.sqrt((xx-((self.image.shape[1]+1)/2-1))**2 + (yy-((self.image.shape[0]+1)/2-1))**2)
         
+        # select maximum radius (removing corners)
+        maximRad = (np.min(self.image.shape)+1)//2
+
+        # select only values within maximum radius
+        sel = np.where(rad <= maximRad)
+        cutRad = rad[sel]
+        cutImage = self.image[sel]
+
+        # convert radius to integer
+        cutRad = np.round(cutRad).astype(int)
+
+        # sum all values at each integer radius
+        totBin = np.bincount(cutRad, cutImage)
+
+        # create profle by doing cummulative sum
+        trimProfile = np.cumsum(totBin)
+
         # loop outwards in whole pixels to find point where kernel is above trim level
-        trimProfile = np.array([0.0])
-        for i in range(1,(np.min(self.image.shape)+1)//2+1):
-            sel = np.where(rad <= i)
-            trimProfile = np.append(trimProfile, self.image[sel].sum())
-                
+        trimProfile = np.append(0.0,trimProfile)
+                       
         # select the first point where all points are above trim level
         sel = np.where(trimProfile > trimLevel)
         for i in range(0,len(sel[0])):
@@ -603,39 +640,39 @@ class psfImage(astroImage):
         return trimReproKernel
 
 # master function to create PSF kernel
-def createPSFkernel(hiresPSF, lowresPSF, outputPixelSize=0.2*u.arcsec, operatingPixelSize=0.2*u.arcsec, circulisePSFs=True, overCirculise=False, maxSize=None, verbose=True, returnOperatingKernel=False, trimKernel=True, trimLevel=0.999):
+def createPSFkernel(hiresPSF, lowresPSF, outputPixelSize=0.2*u.arcsec, operatingPixelSize=0.2*u.arcsec, circulisePSFs=True, overCirculise=False, maxSize=None, verbose=True, returnOperatingKernel=False, trimKernel=True, trimLevel=0.999, parallel=False):
     # check if PSFs are astroImage objects
     if isinstance(hiresPSF, psfImage) is False:
         raise Exception("hiresPSF is not an astroImage PSF object")
     if isinstance(lowresPSF, psfImage) is False:
         raise Exception("lowresPSF is not an astroImage PSF object")
-    
+
     # check operating Pixel size is smaller or equal to output pixel size
     if operatingPixelSize > outputPixelSize:
         raise Exception ("Operating pixel size must be smaller or equal to output pixel size")
 
     # normalise PSFs by total flux
     if verbose:
-        print("Normalising PSFs")
+        print("\t\t Normalising PSFs")
     hiresPSF.normalisePSF()
     lowresPSF.normalisePSF()
 
     # Resample the PSFs to operating pixel scale
     if verbose:
-        print("Resampling PSFs to operating pixel scale")
+        print("\t\t Resampling PSFs to operating pixel scale")
     hiresPSF.resamplePSF(operatingPixelSize)
     lowresPSF.resamplePSF(operatingPixelSize)
     
     # Make sure both kernels are the same size
     if verbose:
-        print("Optimising and matching size of the PSFs")
+        print("\t\t Optimising and matching size of the PSFs")
 
     # see if extra zeros could be culled from the edges
     hiresPSF.removeZeroEdges()
     lowresPSF.removeZeroEdges()
 
     if maxSize is not None:
-        raise Exception("Max Size is not implemented yet")
+        raise Exception("\t\t Max Size is not implemented yet")
     
     # check if sizes are the same:
     if hiresPSF.image.shape != lowresPSF.image.shape:
@@ -651,14 +688,14 @@ def createPSFkernel(hiresPSF, lowresPSF, outputPixelSize=0.2*u.arcsec, operating
 
     # centroid the PSFs
     if verbose:
-        print("Centering PSfs")
+        print("\t\t Centering PSfs")
     hiresPSF.centroid()
     lowresPSF.centroid()
 
     # circulise PSFs if desired
     if circulisePSFs:
         if verbose:
-            print("Circulising PSFs")
+            print("\t\t Circulising PSFs")
         hiresPSF.circulisePSF()
         lowresPSF.circulisePSF()
         # remove any extra zeros created by circulising
@@ -666,38 +703,38 @@ def createPSFkernel(hiresPSF, lowresPSF, outputPixelSize=0.2*u.arcsec, operating
 
     # Fourier tranform the PSFs - only take the real part
     if verbose:
-        print("Performing Fourier transform on PSFs")
+        print("\t\t Performing Fourier transform on PSFs")
     hiresPSF_FFT = hiresPSF.createFourierTransformPSF()
     lowresPSF_FFT = lowresPSF.createFourierTransformPSF()
 
     # circularise the FFTs
     if verbose:
-        print("Circulising PSFs FFTs")
+        print("\t\t Circulising PSFs FFTs")
     if circulisePSFs and overCirculise:
         hiresPSF_FFT.circulisePSF()
         lowresPSF_FFT.circulisePSF()
 
     # highpass filter the PSFs
     if verbose:
-        print("Highpass filtering PSFs")
+        print("\t\t Highpass filtering PSFs")
     hiresPSF_FFT.highpassFilterPSF()
     lowresPSF_FFT.highpassFilterPSF()
 
     # Invert the source FFT (treat any /0 as 0)
     if verbose:
-        print("Inverting High resolution PSF FFT")
+        print("\t\t Inverting High resolution PSF FFT")
     hiresPSF_FFT_invert_image = np.zeros(hiresPSF_FFT.image.shape)
     sel = np.where(hiresPSF_FFT.image != 0.0)
     hiresPSF_FFT_invert_image[sel] = 1.0 / hiresPSF_FFT.image[sel]
 
     # lowpass filter the low resolution PSF
     if verbose:
-        print("Creating Lowpass filter")
+        print("\t\t Creating Lowpass filter")
     lowpassFilter = hiresPSF_FFT.lowpassFilterPSF(returnFilter=True, applyFilter=False)
 
     # calculate the FT of convolution kernel
     if verbose:
-        print("Creating FFT of the kernel")
+        print("\t\t Creating FFT of the kernel")
     kernel_FFT_image = lowresPSF_FFT.image * (lowpassFilter*hiresPSF_FFT_invert_image)
 
     # create astroimage object of the kernel
@@ -716,34 +753,34 @@ def createPSFkernel(hiresPSF, lowresPSF, outputPixelSize=0.2*u.arcsec, operating
     
     # Inverse FFT the kernel
     if verbose:
-        print("Inverse Fourier Transforming the Kernel")
+        print("\t\t Inverse Fourier Transforming the Kernel")
     kernel = kernel_FFT.createInverseFourierTransformPSF()
 
     # circulise kernel
     if circulisePSFs and overCirculise:
         if verbose:
-            print("Circulising the Kernel")
+            print("\t\t Circulising the Kernel")
         kernel.circulisePSF()
 
     # normalise kernel
     if verbose:
-        print("Normalising the Kernel")
+        print("\t\t Normalising the Kernel")
     kernel.normalisePSF()
 
     # reproject kernel to output pixel scale
     if outputPixelSize > operatingPixelSize:
         if verbose:
-            print("Reprojecting kernel to output resolution")
+            print("\t\t Reprojecting kernel to output resolution")
 
         # call reproject method
-        reproKernel = kernel.reprojectPSF(outputPixelSize)
+        reproKernel = kernel.reprojectPSF(outputPixelSize, circulisePSF=circulisePSFs, parallel=parallel)
     else:
         reproKernel = kernel
     
     # trim the kernel
     if trimKernel:
         if verbose:
-            print("Trimming kernel")
+            print("\t\t Trimming kernel")
         
         # trim kernel
         trimReproKernel = reproKernel.trimKernel(trimLevel=trimLevel)
@@ -755,6 +792,94 @@ def createPSFkernel(hiresPSF, lowresPSF, outputPixelSize=0.2*u.arcsec, operating
         return trimReproKernel, kernel
     else:
         return trimReproKernel
+
+# function to create a psf from an EEF file
+def createPSFfromEEF(radius, EEF, outputPixelSize, normalise=True, polyOrder=3, fitGaussian=True, nGaussianPoints=2, FWHM=1.0*u.arcsecond, plotProfile=False):
+    # function to create a psf from an EEF file
+
+    # import modules
+    from scipy.interpolate import interp1d
+    import astropy.io.fits as pyfits
+    if plotProfile:
+        import matplotlib.pyplot as plt
+
+    # normalise based on last radius
+    if normalise:
+        EEF = EEF / EEF[-1]
+
+    # set up profile arrays
+    profileRad = np.array([]) *u.arcsecond
+    profileSB = np.array([])
+
+    # loop through and find surface brightness
+    for i in range(1,len(radius)):
+        # calculate surface brightness of PSF based on difference in EEF
+        profileSB = np.append(profileSB,(EEF[i]-EEF[i-1]) / (np.pi * (radius[i].to(u.arcsecond).value**2 - radius[i-1].to(u.arcsecond).value**2)))
+        # calculate radius
+        profileRad = np.append(profileRad, (radius[i]+radius[i-1])/2.0)
+    
+    # decide size of image to create
+    imageSize = np.ceil(profileRad[-1] / outputPixelSize).astype(int) * 2 + 1
+    
+    # create radius array
+    xx, yy = np.meshgrid(np.arange(0,imageSize), np.arange(0,imageSize))
+    rad = np.sqrt((xx-((imageSize+1)/2-1))**2 + (yy-((imageSize+1)/2-1))**2) * outputPixelSize.to(u.arcsecond).value
+
+    # create scipy interpolater
+    psfProFunc = interp1d(profileRad.to(u.arcsecond).value, profileSB, kind=polyOrder, fill_value='extrapolate')
+
+    # apply the interpolater
+    imagePSF = psfProFunc(rad)
+
+    # fit a gaussian to the first two data points
+    if fitGaussian:
+        from scipy.optimize import curve_fit
+
+        # initial guess
+        p0 = [1.0, FWHM.to(u.arcsecond).value/2.355]
+
+        def gaussian(x, a, sigma):
+            return a*np.exp(-(x)**2/(2*sigma**2))
+        popt, pcov = curve_fit(gaussian, profileRad[0:nGaussianPoints].to(u.arcsecond).value, profileSB[0:nGaussianPoints], p0=p0)
+
+        # apply gaussian fit below where fit is defined
+        sel = np.where(rad <= profileRad[nGaussianPoints-1].to(u.arcsecond).value)
+        imagePSF[sel] = np.exp(-1.0*rad[sel]**2.0/(2*popt[1]**2.0))*popt[0]
+    
+    if plotProfile:
+        fig = plt.figure()
+        f1 = plt.axes([0.1,0.1,0.85,0.85])
+        f1.plot(profileRad, profileSB, 'o')
+        plotRad = np.arange(0,profileRad[-1].to(u.arcsecond).value,0.01)
+        f1.plot(plotRad, psfProFunc(plotRad))
+        if fitGaussian:
+            sel = np.where(plotRad <= profileRad[nGaussianPoints-1].to(u.arcsecond).value)
+            f1.plot(plotRad[sel], np.exp(-1.0*plotRad[sel]**2.0/(2*popt[1]**2.0))*popt[0])
+        plt.show()
+
+    # as extrapolating set anywhere above profileRad to zero
+    sel = np.where(rad > profileRad[-1].to(u.arcsecond).value)
+    imagePSF[sel] = 0.0
+
+    # create a HDU to crete header object
+    hdu = pyfits.PrimaryHDU(imagePSF)
+
+    # add in pixel size
+    hdu.header['CDELT1'] = -outputPixelSize.to(u.deg).value
+    hdu.header['CDELT2'] = outputPixelSize.to(u.deg).value
+
+    # put in HDUList
+    hduList = pyfits.HDUList([hdu])
+
+    # create PSF object
+    psfObj = psfImage(hduList, load=False)
+
+    # normalise PSF
+    psfObj.normalisePSF()
+
+    return psfObj
+
+
 
     
 
