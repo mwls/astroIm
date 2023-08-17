@@ -371,7 +371,8 @@ class astroImage(object):
                               "Planck":{"857":350.0*u.micron, "545":550*u.micron, "353":850.0*u.micron, "217":1.382*u.mm,\
                                         "143":2.097*u.mm, "100":3.0*u.mm, "070":4.286*u.mm, "044":6.818*u.mm, "030":10.0*u.mm},\
                               "GALEX":{"FUV":1528*u.angstrom, "NUV":2271*u.angstrom},\
-                              "2MASS":{"J":1.235*u.micron, "H":1.662*u.micron, "K":2.159*u.micron}}
+                              "2MASS":{"J":1.235*u.micron, "H":1.662*u.micron, "K":2.159*u.micron},\
+                              "UVOT":{"W1":2600*u.angstrom, "M2":2246*u.angstrom, "W2":1928*u.angstrom}}
         
         if instrument is not None:
             return centralWavelengths[instrument][band]
@@ -388,7 +389,8 @@ class astroImage(object):
                  "Planck":{"857":4.325*u.arcmin, "545":4.682*u.arcmin, "353":4.818*u.arcmin, "217":4.990*u.arcmin,\
                            "143":7.248*u.arcmin, "100":9.651*u.arcmin, "070":13.252*u.arcmin, "044":27.005*u.arcmin, "030":32.239*u.arcmin},\
                  "GALEX":{"FUV":4.3*u.arcsec, "NUV":5.3*u.arcsec},\
-                 "2MASS":{"J":2.8*u.arcsec, "H":2.7*u.arcsec, "K":2.8*u.arcsec}}
+                 "2MASS":{"J":2.8*u.arcsec, "H":2.7*u.arcsec, "K":2.8*u.arcsec},\
+                 "UVOT":{"W1":2.37*u.arcsecond, "M2":2.45*u.arcsecond, "W2":2.92*u.arcsecond}}
         
         if instrument is not None and band is not None:
             return FWHMs[instrument][band]
@@ -2886,7 +2888,7 @@ class astroImage(object):
 
     ###############################################################################################################
     
-    def reproject(self, projHead, exact=True, conserveFlux=None):
+    def reproject(self, projHead, exact=True, conserveFlux=None, parallel=False):
         # function to reproject the fits image
         from reproject import reproject_from_healpix, reproject_interp, reproject_exact
         
@@ -2902,9 +2904,9 @@ class astroImage(object):
             resampleMap,_ = reproject_from_healpix(hdu, projHead)
         else:
             if exact:
-                resampleMap, _ = reproject_exact(hdu, projHead)
+                resampleMap, _ = reproject_exact(hdu, projHead, parallel=parallel)
             else:
-                resampleMap, _ = reproject_interp(hdu, projHead)
+                resampleMap, _ = reproject_interp(hdu, projHead, parallel=parallel)
         
         
         # modify original header
