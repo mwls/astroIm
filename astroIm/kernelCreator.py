@@ -356,7 +356,7 @@ class psfImage(astroImage):
 
     def circulisePSF(self, polyOrder=3, upScaleFactor=3.0):
         # function to make PSF circularly symmetric
-
+        
         # import modules
         from scipy.interpolate import interp1d
 
@@ -708,9 +708,9 @@ def createPSFkernel(hiresPSF, lowresPSF, outputPixelSize=0.2*u.arcsec, operating
     lowresPSF_FFT = lowresPSF.createFourierTransformPSF()
 
     # circularise the FFTs
-    if verbose:
-        print("\t\t Circulising PSFs FFTs")
     if circulisePSFs and overCirculise:
+        if verbose:
+            print("\t\t Circulising PSFs FFTs")
         hiresPSF_FFT.circulisePSF()
         lowresPSF_FFT.circulisePSF()
 

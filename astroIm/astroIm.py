@@ -53,7 +53,7 @@ class astroImage(object):
                 if slices is None:
                     raise Exception("To use astroImage class must indicate what slices to use for data with more than 2D data")
                 
-                # see what oder slices is given in, and if using zero index
+                # see what order slices is given in, and if using zero index
                 if "fitsAxisOrder" in slices:
                     fitsOrder = slices["fitsAxisOrder"]
                 else:
@@ -80,7 +80,9 @@ class astroImage(object):
                         imgSlices[self.image.ndim-key+zeroIndex-1] = slice(slices[key] - zeroIndex, slices[key] - zeroIndex+1)
                     else:
                         imgSlices[key-zeroIndex] = slice(slices[key] - zeroIndex, slices[key] - zeroIndex+1)
-                
+                # covert to tuple
+                imgSlices = tuple(imgSlices)
+
                 # now perform slices to the array
                 self.image = self.image[imgSlices]
                 
@@ -170,6 +172,14 @@ class astroImage(object):
         else:
             self.telescope = telescope
         
+        # correct telescope name if needed
+        if self.telescope == "act":
+            self.telescope = "ACT"
+            self.header['TELESCOP'] = "ACT"
+        elif self.telescope == "act+planck":
+            self.telescope = "ACT&Planck"
+            self.header['TELESCOP'] = "ACT&Planck"
+
         # identify instrument
         if instrument is None:
             if 'INSTRUME' in self.header:
@@ -207,7 +217,13 @@ class astroImage(object):
             elif 'WVLNGTH' in self.header:
                 self.band = self.header['WVLNGTH']
             elif 'FREQ' in self.header:
-                self.band = self.header['FREQ']
+                if self.telescope == "ACT" or self.telescope == "ACT&Planck":
+                    if self.header['FREQ'][0] == 'f':
+                        self.band = self.header['FREQ'][1:]
+                    else:
+                        self.band = self.header['FREQ']
+                else:
+                    self.band = self.header['FREQ']
             elif ext != 0:
                 bandFound = False
                 primeHeader = fits[0].header
@@ -272,8 +288,12 @@ class astroImage(object):
        
         # see if 2MASS band needs adjusting
         if self.instrument == "2MASS":
-            if self.band in ['j', 'h', 'k']:
+            if self.band in ['j', 'h']:
                 self.band = self.band.upper()
+            if self.band == "K" or self.band == "k":
+                self.band = "Ks"
+            if self.band == "ks":
+                self.band = "Ks"
 
         # see if bunit in header, if planck add it
         if "BUNIT" not in self.header:
@@ -353,7 +373,10 @@ class astroImage(object):
                      "Planck":{"857":24.244*u.arcmin**2, "545":26.535*u.arcmin**2, "353":26.714*u.arcmin**2, "217":28.447*u.arcmin**2,\
                                "143":59.954*u.arcmin**2, "100":105.778*u.arcmin**2, "070":200.742*u.arcmin**2, "044":832.946*u.arcmin**2, "030":1189.513*u.arcmin**2}, 
                      "SCUBA-2&Planck":{"850":246.729*u.arcsecond**2.}, "SCUBA-2&SPIRE":{"450":141.713*u.arcsecond**2.},\
-                     "NIKA-2&Planck":{"260":152.5*u.arcsecond**2., "160":367.1*u.arcsecond**2.}}
+                     "NIKA-2&Planck":{"260":152.5*u.arcsecond**2., "160":367.1*u.arcsecond**2.},\
+                     "ACT":{"220":117.6*u.nsr, "150":188.17*u.nsr, "090":490.29*u.nsr}, # 220 value from Pinceton specification site, other two from ACT-DR5 clusters page
+                     "NIKA-2&ACT":{"220":117.6*u.nsr, "150":188.17*u.nsr, "090":490.29*u.nsr},\
+                     }
         
         if instrument is not None:
             return beamAreas[instrument][band]
@@ -371,8 +394,13 @@ class astroImage(object):
                               "Planck":{"857":350.0*u.micron, "545":550*u.micron, "353":850.0*u.micron, "217":1.382*u.mm,\
                                         "143":2.097*u.mm, "100":3.0*u.mm, "070":4.286*u.mm, "044":6.818*u.mm, "030":10.0*u.mm},\
                               "GALEX":{"FUV":1528*u.angstrom, "NUV":2271*u.angstrom},\
-                              "2MASS":{"J":1.235*u.micron, "H":1.662*u.micron, "K":2.159*u.micron},\
-                              "UVOT":{"W1":2600*u.angstrom, "M2":2246*u.angstrom, "W2":1928*u.angstrom}}
+                              "2MASS":{"J":1.235*u.micron, "H":1.662*u.micron, "Ks":2.159*u.micron},\
+                              "UVOT":{"W1":2600*u.angstrom, "M2":2246*u.angstrom, "W2":1928*u.angstrom},\
+                              "SDSS":{"u":3543*u.angstrom, "g":4770*u.angstrom, "r":6231*u.angstrom, "i":7625*u.angstrom, "z":9134*u.angstrom},\
+                              "WISE":{"3.4":3.3526*u.micron, "4.6":4.6028*u.micron, "12":11.5608*u.micron, "22":22.0883*u.micron},\
+                              "ACT":{"220":1.33835919*u.mm, "150":1.99861639*u.mm, "090":3.05910671*u.mm},\
+                              "ACT&Planck":{"220":1.33835919*u.mm, "150":1.99861639*u.mm, "090":3.05910671*u.mm},\
+                              }            
         
         if instrument is not None:
             return centralWavelengths[instrument][band]
@@ -389,8 +417,13 @@ class astroImage(object):
                  "Planck":{"857":4.325*u.arcmin, "545":4.682*u.arcmin, "353":4.818*u.arcmin, "217":4.990*u.arcmin,\
                            "143":7.248*u.arcmin, "100":9.651*u.arcmin, "070":13.252*u.arcmin, "044":27.005*u.arcmin, "030":32.239*u.arcmin},\
                  "GALEX":{"FUV":4.3*u.arcsec, "NUV":5.3*u.arcsec},\
-                 "2MASS":{"J":2.8*u.arcsec, "H":2.7*u.arcsec, "K":2.8*u.arcsec},\
-                 "UVOT":{"W1":2.37*u.arcsecond, "M2":2.45*u.arcsecond, "W2":2.92*u.arcsecond}}
+                 "2MASS":{"J":2.8*u.arcsec, "H":2.7*u.arcsec, "Ks":2.8*u.arcsec},\
+                 "UVOT":{"W1":2.37*u.arcsecond, "M2":2.45*u.arcsecond, "W2":2.92*u.arcsecond},\
+                 "SDSS":{"u":1.53*u.arcsecond, "g":1.44*u.arcsecond, "r":1.32*u.arcsecond, "i":1.26*u.arcsecond, "z":1.29*u.arcsecond},\
+                 "WISE":{"3.4":6.1*u.arcsecond, "4.6":6.4*u.arcsecond, "12":6.5*u.arcsecond, "22":12.0*u.arcsecond},\
+                 "ACT":{"220":1.0*u.arcminute, "150":1.3*u.arcminute, "090":2.1*u.arcminute},\
+                 "ACT&Planck":{"220":1.0*u.arcminute, "150":1.3*u.arcminute, "090":2.1*u.arcminute},\
+                 }
         
         if instrument is not None and band is not None:
             return FWHMs[instrument][band]
@@ -445,16 +478,19 @@ class astroImage(object):
         units = {"other":["pW", "K_CMB", "ct/s"],\
                  "Jy/arcsec^2":["Jy/arcsec^2", "Jy arcsec^-2", "Jy arcsec-2", "Jy arcsec**-2"],\
                  "mJy/arcsec^2":["mJy/arcsec^2", "mJy arcsec^-2", "mJy arcsec-2", "mJy/arcsec**2"], \
-                 "MJy/sr":["MJy/sr", "MJy per sr", "MJy sr^-1", "MJy sr-1", "MJy sr**-1"],\
+                 "MJy/sr":["MJy/sr", "MJy per sr", "MJy sr^-1", "MJy sr-1", "MJy sr**-1", "MJy / sr"],\
                  "Jy/beam":["Jy/beam", "Jy beam^-1", "Jy beam-1", "Jy beam**-1"],\
                  "mJy/beam":["mJy/beam", "mJy beam^-1", "mJy beam-1", "mJy beam**-1"],\
-                 "Jy/pix":["Jy/pix", "Jy pix^-1", "Jy pix-1", "Jy pix**-1", "Jy/pixel", "Jy pixel^-1", "Jy pixel-1", "Jy pixel**-1"],\
-                 "mJy/pix":["mJy/pix", "mJy pix^-1", "mJy pix-1", "mJy pix**-1", "mJy pixel^-1", "mJy pixel-1", "mJy pixel**-1"]}
+                 "Jy/pix":["Jy/pix", "Jy pix^-1", "Jy pix-1", "Jy pix**-1", "Jy/pixel", "Jy pixel^-1", "Jy pixel-1", "Jy pixel**-1", "Jy / pix"],\
+                 "mJy/pix":["mJy/pix", "mJy/pixel", "mJy pix^-1", "mJy pix-1", "mJy pix**-1", "mJy pixel^-1", "mJy pixel-1", "mJy pixel**-1"],\
+                 "uK_CMB":["uK_CMB", "uK CMB"],\
+                 "K_CMB":["K_CMB", "K CMB"],\
+                 }
         
         # is the unit surface brightness or not
         if SBinfo:
             masterGroupSB = {"other":True, "Jy/arcsec^2":True, "mJy/arcsec^2":True, "MJy/sr":True, "Jy/beam":True, "mJy/beam":True,\
-                             "Jy/pix":False, "mJy/pix":False}
+                             "Jy/pix":False, "mJy/pix":False, "uK_CMB":True, "K_CMB":True}
             SBunits = {}
             for unitClass in units:
                 for unit in units[unitClass]:
@@ -555,7 +591,7 @@ class astroImage(object):
         # check if coordinate was given as a single position and if so adjust output
         if isinstance(coords, (list,tuple)) is False and len(coords) == 1:
 
-            if isinstance(coords.ra.value, (float, np.float64, np.float32, np.float16, np.float128, np.float256)):
+            if isinstance(coords.ra.value, (float)):
                 inImage = inImage[0]
                 pixCoordX = pixCoordX[0]
                 pixCoordY = pixCoordY[0]
@@ -574,7 +610,8 @@ class astroImage(object):
         # import modules
         from astropy.stats import sigma_clipped_stats
         if mask is None:
-            from photutils import make_source_mask
+            #from photutils import make_source_mask
+            pass
         if parallelMask:
             import multiprocessing as mp
         
@@ -619,7 +656,8 @@ class astroImage(object):
         # import modules
         from astropy.stats import sigma_clip
         if mask is None:
-            from photutils import make_source_mask
+            #from photutils import make_source_mask
+            pass
         from astropy.modeling.models import Polynomial2D
         from astropy.modeling import fitting as astropyFitter
         
@@ -1548,7 +1586,7 @@ class astroImage(object):
         elif isinstance(centres, (list, tuple, np.ndarray)) is False:
             centres = [centres]
         else:
-            if len(centres) == 2 and isinstance(centres[0], (float, int, np.float, np.int)) and isinstance(centres[0], (float, int, np.float, np.int)):
+            if len(centres) == 2 and isinstance(centres[0], (float, int)) and isinstance(centres[0], (float, int)):
                 centres = [centres]
         
         # arrays to hold indicies
@@ -2516,6 +2554,18 @@ class astroImage(object):
                     conversion = 0.001 * u.Jy / u.arcsecond**2.0
                 elif oldUnit in units["MJy/sr"]:
                     conversion = 1.0e6 * u.Jy / u.sr
+                elif oldUnit in units["uK_CMB"] or oldUnit in units["K_CMB"]:
+                    try:
+                        import pysm3.units as cmbUnits
+                    except:
+                        raise Exception("Converting CMB units requires pysm3 to be installed")
+                    if oldUnit in units["uK_CMB"]:
+                        conversion = 1.0 * cmbUnits.uK_CMB
+                    elif oldUnit in units["K_CMB"]:
+                        conversion = 1.0 * cmbUnits.K_CMB
+                    currentWavelength = self.standardCentralWavelengths(instrument=self.instrument, band=self.band)
+                    conversion = conversion.to(u.Jy/u.sr, equivalencies=cmbUnits.cmb_equivalencies((con.c/currentWavelength).to(u.GHz)))
+                    
                 else:
                     raise ValueError("Unit not programmed: ", oldUnit)
                                 
@@ -2730,10 +2780,10 @@ class astroImage(object):
             else:
                 # find index of closest Temperature
                 #indexT = np.int(np.floor((temperature-gridInfo['T']['start'])/gridInfo['T']['step']))
-                indexT = np.int((temperature-gridInfo['T']['start'])/gridInfo['T']['step'])
+                indexT = int((temperature-gridInfo['T']['start'])/gridInfo['T']['step'])
                 
                 # find index of closest Beta
-                indexB = np.int((beta-gridInfo['B']['start'])/gridInfo['B']['end'])
+                indexB = int((beta-gridInfo['B']['start'])/gridInfo['B']['end'])
                 # change the index values if out of range
                 if indexT < 0:
                     indexT = 0
@@ -2913,6 +2963,7 @@ class astroImage(object):
         # projection keywords
         projKeywords = ["NAXIS1", "NAXIS2", "LBOUND1", "LBOUND2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2",\
                         "CTYPE1", "CTYPE2", "CDELT1", "CDELT2", "CD1_1", "CD1_2", "CD2_1", "CD2_2",\
+                        "PC1_1", "PC1_2", "PC2_1", "PC2_2",\
                         "RADESYS", "EQUINOX", "CROTA2", "CROTA1", "LONPOLE", "LATPOLE"]
         header = self.header.copy()
         
@@ -2986,10 +3037,14 @@ class astroImage(object):
     
     ###############################################################################################################
     
-    def convolve(self, kernel, boundary='fill', fill_value=0.0, peakNorm=False, FWHM=True):
+    def convolve(self, kernel, boundary='fill', fill_value=0.0, peakNorm=False, FWHM=True, fftConvolve=True):
         
         # import modules
-        from astropy.convolution import convolve_fft as APconvolve_fft
+        if fftConvolve:
+            from astropy.convolution import convolve_fft as APconvolve_fft
+        else:
+            from astropy.convolution import convolve as APconvolve
+        
         from astropy.convolution import Gaussian2DKernel
         
         # see if 2D kernel is a number or an array
@@ -3017,9 +3072,15 @@ class astroImage(object):
             normKernel = True
         
         if boundary == 'fill':
-            convolvedArray = APconvolve_fft(self.image, kernelImage, boundary=boundary, fill_value=fill_value, allow_huge=True, normalize_kernel=normKernel)
+            if fftConvolve:
+                convolvedArray = APconvolve_fft(self.image, kernelImage, boundary=boundary, fill_value=fill_value, allow_huge=True, normalize_kernel=normKernel)
+            else:
+                convolvedArray = APconvolve(self.image, kernelImage, boundary=boundary, fill_value=fill_value, normalize_kernel=normKernel)
         else:
-            convolvedArray = APconvolve_fft(self.image, kernelImage, boundary=boundary, allow_huge=True, normalize_kernel=normKernel)
+            if fftConvolve:
+                convolvedArray = APconvolve_fft(self.image, kernelImage, boundary=boundary, allow_huge=True, normalize_kernel=normKernel)
+            else:
+                convolvedArray = APconvolve(self.image, kernelImage, boundary=boundary, normalize_kernel=normKernel)
         
         # restore NaNs
         convolvedArray[NaNsel] = np.nan
@@ -3172,7 +3233,7 @@ class astroImage(object):
             filter = (np.sqrt(1.0+(d_f/filterScale)**(2.0*butterworthOrder)))**-1.0
         elif filterType == "gauss":
             # Create a Gaussian given the filter scale, taking into account pixel scale.
-            filter_scale = np.float(filterScale)
+            filter_scale = float(filterScale)
             filter_std = filter_scale / (2.0*np.sqrt(2.0*np.log(2.0)))
             filter = np.exp(-( (d_f*2.0*np.pi)**2.0 * filter_std**2.0 / 2.0))
             #filter = np.exp(-(d)**2.0 / (2.0*filter_std**2.0))
@@ -3180,7 +3241,7 @@ class astroImage(object):
             d_f = d_f**-1
             if sigmoidScaling is None:
                 sigmoidScaling = 1.0
-            filter_scale = np.float(filterScale)
+            filter_scale = float(filterScale)
             filter = 1.0 - 1.0 / (1.0 + np.exp(-1.0*(d_f - filter_scale)/sigmoidScaling))
         else:
             raise Exception("Must specify combination type")
@@ -3258,7 +3319,7 @@ class astroImage(object):
     
     ###############################################################################################################
     
-    def getPowerSpectra(self, oneD=True, mask=None, plot=True, spatialUnits=u.deg, normaliseScale=None): 
+    def getPowerSpectra(self, oneD=True, mask=None, plot=True, spatialUnits=u.deg, normaliseScale=None, savePlot=None): 
         # function to create power spectrum of the map
         # based on Agpy implementation of Adam Ginsburg
         
@@ -3299,11 +3360,11 @@ class astroImage(object):
         
         
         if plot:
-            self.powerSpecPlot()
+            self.powerSpecPlot(save=savePlot)
 
     ###############################################################################################################
 
-    def powerSpecPlot(self, powerSpecInfo=None, spatialUnits=None, labels=None, linestyle=None, color=None):
+    def powerSpecPlot(self, powerSpecInfo=None, spatialUnits=None, labels=None, linestyle=None, color=None, show=True, save=None):
         # module which plots a powerspectra
         # import module
         import matplotlib.pyplot as plt
@@ -3392,8 +3453,13 @@ class astroImage(object):
             f1.set_xlabel('Spatial Frequency (1/")')
             ax2.set_xlabel('Spatial Scale (")')
         
+        # if save plot specified
+        if save is not None:
+            plt.savefig(save)
+
         # show plot
-        plt.show()
+        if show:
+            plt.show()
     
         return
         
@@ -3670,12 +3736,13 @@ class astroImage(object):
         
         return fitsHdu
 
+
 ##############################################################################################################
 ###############################################################################################################        
 ###############################################################################################################
 
 # define function to plot multiple power spectra
-def multiPowerSpectraPlot(images, units=None, matchProjection=False, refImage=0, oneD=True, mask=None, spatialUnits=u.deg, normaliseScale=None, labels=None, linestyle=None, color=None, beamAreas=None):
+def multiPowerSpectraPlot(images, units=None, matchProjection=False, refImage=0, oneD=True, mask=None, spatialUnits=u.deg, normaliseScale=None, labels=None, linestyle=None, color=None, beamAreas=None, show=True, save=None):
     # function to plot multiple power spctra on one plot
 
     ### apply image pre-processing
@@ -3735,7 +3802,7 @@ def multiPowerSpectraPlot(images, units=None, matchProjection=False, refImage=0,
         imageObj.getPowerSpectra(spatialUnits=spatialUnits, normaliseScale=normaliseScale, oneD=oneD, mask=mask, plot=False)
 
     # create plot
-    images[0].powerSpecPlot(powerSpecInfo=[imageObj.powerSpec for imageObj in images], spatialUnits=spatialUnits, labels=labels, linestyle=linestyle, color=color)
+    images[0].powerSpecPlot(powerSpecInfo=[imageObj.powerSpec for imageObj in images], spatialUnits=spatialUnits, labels=labels, linestyle=linestyle, color=color, show=show, save=save)
 
     return
 
@@ -3892,8 +3959,12 @@ def loadColourCorrect(colFile, SPIREtype):
             if "NIKA-2" not in newCCinfo:
                 newCCinfo['NIKA-2'] = {}
             newCCinfo['NIKA-2'][key[4:]] = ccinfo[key]
+        elif key[0:3] == "ACT":
+            if "ACT" not in newCCinfo:
+                newCCinfo['ACT'] = {}
+            newCCinfo['ACT'][key[3:]] = ccinfo[key]
         else:
-            raise "Instrument/band not programmed for cc load"
+            raise Exception("Instrument/band not programmed for cc load")
 
     
     # return colour correction information
@@ -3923,3 +3994,26 @@ def regionsToMask(mask, imgWCS, shape):
         #imgMask = imgMask + imgRegion
         threadMask[imgRegion > 0] = 1
     return threadMask
+
+###############################################################################################################
+
+def make_source_mask(data, nsigma, npixels, dilate_size):
+        # temporary function to deal with depreciation of make_source_mask in photutils
+        from photutils.segmentation import detect_threshold
+        from photutils.segmentation import detect_sources
+        from scipy import ndimage
+
+        # run detect threshold
+        threshold = detect_threshold(data, nsigma)
+
+        segm = detect_sources(data, threshold, npixels)
+        if segm is None:
+            return np.zeros(data.shape, dtype=bool)
+
+        if dilate_size is not None and dilate_size > 1:
+            selem = np.ones((dilate_size, dilate_size))
+            return ndimage.binary_dilation(segm.data.astype(bool), selem)
+        else:
+            return segm.data.astype(bool)
+
+###############################################################################################################
