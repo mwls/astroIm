@@ -375,7 +375,7 @@ class astroImage(object):
                      "SCUBA-2&Planck":{"850":246.729*u.arcsecond**2.}, "SCUBA-2&SPIRE":{"450":141.713*u.arcsecond**2.},\
                      "NIKA-2&Planck":{"260":152.5*u.arcsecond**2., "160":367.1*u.arcsecond**2.},\
                      "ACT":{"220":117.6*u.nsr, "150":188.17*u.nsr, "090":490.29*u.nsr}, # 220 value from Pinceton specification site, other two from ACT-DR5 clusters page
-                     "NIKA-2&ACT":{"220":117.6*u.nsr, "150":188.17*u.nsr, "090":490.29*u.nsr},\
+                     "NIKA-2&ACT":{"260":152.5*u.arcsecond**2., "160":367.1*u.arcsecond**2.},\
                      }
         
         if instrument is not None:

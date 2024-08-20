@@ -289,8 +289,8 @@ def convolvend(array, kernel, boundary='fill', fill_value=0,
     # complex components, we change the types.  Only the real part will be
     # returned!
     # Check that the arguments are lists or Numpy arrays
-    array = np.asarray(array, dtype=np.complex)
-    kernel = np.asarray(kernel, dtype=np.complex)
+    array = np.asarray(array, dtype=complex)
+    kernel = np.asarray(kernel, dtype=complex)
 
     # Check that the number of dimensions is compatible
     if array.ndim != kernel.ndim:
@@ -301,9 +301,9 @@ def convolvend(array, kernel, boundary='fill', fill_value=0,
     array_dtype = array.dtype
     # turn the arrays into 'complex' arrays
     if array.dtype.kind != 'c':
-        array = array.astype(np.complex)
+        array = array.astype(complex)
     if kernel.dtype.kind != 'c':
-        kernel = kernel.astype(np.complex)
+        kernel = kernel.astype(complex)
 
     # mask catching - masks must be turned into NaNs for use later
     if np.ma.is_masked(array):
@@ -475,7 +475,7 @@ def convolvend(array, kernel, boundary='fill', fill_value=0,
     if return_fft:
         if fftshift: # default on
             if crop:
-                return np.fft.fftshift(fftmult)[arrayslices]
+                return np.fft.fftshift(fftmult)[arrayslices[0],arrayslices[1]]
             else:
                 return np.fft.fftshift(fftmult)
         else:
