@@ -501,6 +501,22 @@ class astroImage(object):
         else:
             return units
     
+    ###############################################################################################################
+
+    def isSurfaceBrightnessUnit(self):
+        # function to see if image unit is a surface brightness unit
+
+        # get programmed units
+        programedUnits, SBinfo = self.programmedUnits(SBinfo=True)
+        
+        # see if image unit is in SB info
+        if self.unit in SBinfo:
+            if SBinfo[self.unit] is True:
+                return True
+            else:
+                return False
+        else:
+            return None
     
     ###############################################################################################################
     ###############################################################################################################
@@ -601,6 +617,72 @@ class astroImage(object):
         else:
             return inImage
 
+    ###############################################################################################################
+
+    def getPixelPosition(self, coords, oneIndex=False):
+        # function to get ra and dec position of a pixel 
+        # assumes X, Y
+
+        # set origin
+        if oneIndex:
+            origin = 1
+        else:
+            origin = 0
+
+        # create WCS
+        WCSinfo = wcs.WCS(self.header)
+
+        # see if just one coordinate provided as embedded single entry
+        if len(coords) == 1:
+            # create RA and dec array
+            outPos = wcs.utils.pixel_to_skycoord(coords[0][0], coords[0][1], WCSinfo, origin=origin)
+
+            return [outPos]
+        elif len(coords) == 2:
+            # see if just a coordinate or list of two coordinates
+            if isinstance(coords[0], (list,tuple,np.ndarray)):
+                outPos = [wcs.utils.pixel_to_skycoord(coords[i][0], coords[i][1], WCSinfo, origin=origin) for i in range(0,len(coords))]
+
+                return outPos
+            else:
+                # create RA and dec array
+                outPos = wcs.utils.pixel_to_skycoord(coords[0], coords[1], WCSinfo, origin=origin)
+
+                return outPos
+
+        else:
+            outPos = [wcs.utils.pixel_to_skycoord(coords[i][0], coords[i][1], WCSinfo, origin=origin) for i in range(0,len(coords))]
+
+            return outPos
+
+    ###############################################################################################################
+
+    def getPixelFromCoord(self, coords, oneIndex=False):
+        # function to get pixel position from ra and dec
+        # assumes ra, dec
+
+        # set origin
+        if oneIndex:
+            origin = 1
+        else:
+            origin = 0
+
+        # create WCS
+        WCSinfo = wcs.WCS(self.header)
+
+        # see if its a list
+        if isinstance(coords, (list,tuple)):
+            # create X, Y array
+            outPix = []
+            # check each coordinate
+            for i in range(0,len(coords)):
+                outPix.append(wcs.utils.skycoord_to_pixel(coords[i], WCSinfo, origin=origin))
+        else:
+            # get X, Y position from each coordinate
+            outPix = wcs.utils.skycoord_to_pixel(coords, WCSinfo, origin=origin)
+
+        # return output
+        return outPix
 
     ###############################################################################################################
         
@@ -1529,12 +1611,11 @@ class astroImage(object):
         # if the image is in surface brightness units return the mean of aperture not the sum
         calculateMean = False
         if hasattr(self,'unit'):
-            programedUnits, SBinfo = self.programmedUnits(SBinfo=True)
-            if self.unit in SBinfo:
-                if SBinfo[self.unit] is True:
-                    print("Image is in Surface-Brightness Units - Calculating Mean")
-                    calculateMean = True
-        
+            SBunit = self.isSurfaceBrightnessUnit()
+            if SBunit is True:
+                print("Image is in Surface-Brightness Units - Calculating Mean")
+                calculateMean = True
+
         # look at what error info is provided
         if error is not None:
             
@@ -2040,7 +2121,7 @@ class astroImage(object):
             
             # try adding in unit
             if hasattr(self, 'unit') and self.unit is not None:
-                #unts = self.programmedUnits()
+                programedUnits = self.programmedUnits()
                 if calculateMean:
                     phot_table['aperture_mean'].unit = self.unit
                     if error is not None:
@@ -2218,7 +2299,7 @@ class astroImage(object):
 
     ###############################################################################################################
 
-    def coordMaps(self):
+    def coordMaps(self, returnPixMaps=False):
         # function to find ra and dec co-ordinates of every pixel
         
         # import modules
@@ -2266,7 +2347,11 @@ class astroImage(object):
         self.raMap = raMap * u.degree
         self.decMap = decMap * u.degree
         
-        return
+        # if want to output 
+        if returnPixMaps:
+            return xpix, ypix
+        else:
+            return
     
     ###############################################################################################################
 
@@ -2990,8 +3075,14 @@ class astroImage(object):
         repoImage.getPixelScale()
 
         if conserveFlux is None:
-            if self.unit=="Jy/pix" or self.unit=="mJy/pix":
-                conserveFlux = True
+            if hasattr(self,'unit'):
+                SBunit = self.isSurfaceBrightnessUnit()
+                if SBunit is True:
+                    conserveFlux = False
+                elif SBunit is False:
+                    conserveFlux = True
+                else:
+                    conserveFlux = False
             else:
                 conserveFlux = False
 
@@ -3465,7 +3556,7 @@ class astroImage(object):
         
 ###############################################################################################################
             
-    def plot(self, recentre=None, stretch='linear', vmin=None, vmid=None, vmax=None, cmap=None, facecolour='white', nancolour='black', hide_colourbar=False, save=None):
+    def plot(self, recentre=None, stretch='linear', vmin=None, vmid=None, vmax=None, cmap=None, facecolour='white', nancolour='black', hide_colourbar=False, show=True, save=None):
         # function to make a quick plot of the data using matplotlib and aplpy
         
         # import modules
@@ -3567,7 +3658,10 @@ class astroImage(object):
         if save is not None:
             plt.savefig(save)
         
-        plt.show()
+        if show:
+            plt.show()
+        
+        plt.close()
 
     ###########################################################################################################
 
