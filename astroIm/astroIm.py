@@ -179,6 +179,9 @@ class astroImage(object):
         elif self.telescope == "act+planck":
             self.telescope = "ACT&Planck"
             self.header['TELESCOP'] = "ACT&Planck"
+        elif self.telescope == "CTIO 4.0-m telescope":
+            self.telescope = "CTIO"
+            self.header['TELESCOP'] = "CTIO"
 
         # identify instrument
         if instrument is None:
@@ -188,6 +191,8 @@ class astroImage(object):
                 self.instrument = self.header['INSTRMNT']
             elif 'ORIGIN' in self.header and self.header['ORIGIN'] == "2MASS":
                 self.instrument = "2MASS"
+            elif self.telescope == "WISE":
+                self.instrument = "WISE"
             elif ext != 0:
                 try:
                     primeHeader = fits[0].header
@@ -216,6 +221,8 @@ class astroImage(object):
                 self.band = self.header['WAVELNTH']
             elif 'WVLNGTH' in self.header:
                 self.band = self.header['WVLNGTH']
+            elif 'WAVELN' in self.header:
+                self.band = self.header['WAVELN']
             elif 'FREQ' in self.header:
                 if self.telescope == "ACT" or self.telescope == "ACT&Planck":
                     if self.header['FREQ'][0] == 'f':
@@ -257,6 +264,8 @@ class astroImage(object):
                     if verbose:
                         print("Warning - Band not identified, recommended to specify")
                     self.band = None      
+            elif 'BAND' in self.header:
+                self.band = self.header['BAND']
             else:
                 if verbose:
                     print("Warning - Band not identified, recommended to specify")
@@ -294,6 +303,22 @@ class astroImage(object):
                 self.band = "Ks"
             if self.band == "ks":
                 self.band = "Ks"
+
+        # see if WISE band needs adjusting
+        if self.instrument == "WISE":
+            if self.band == "1" or self.band == 1 or self.band == "W1":
+                self.band = "3.4"
+            elif self.band == "2" or self.band == 2 or self.band == "W2":
+                self.band = "4.6"
+            elif self.band == "3" or self.band == 3 or self.band == "W3":
+                self.band = "12"
+            elif self.band == "4" or self.band == 4 or self.band == "W4":
+                self.band = "22"
+
+        # see if DECcam filter needs updating
+        if self.instrument == "DECam":
+            if len(self.band) > 7 and self.band[1:7] == " DECam":
+                self.band = self.band[0]
 
         # see if bunit in header, if planck add it
         if "BUNIT" not in self.header:
@@ -440,7 +465,9 @@ class astroImage(object):
         # define standard instrumental units and provide function to test if they are programmed
         instrumentUnits = {"SCUBA-2":"pW",\
                            "Planck":"K_CMB",\
-                           "GALEX":"ct/s"}
+                           "GALEX":"ct/s",\
+                           "2MASS":"DN",\
+                           "WISE":"DN"}
         
         if unit is None:
             if instrument in instrumentUnits:
@@ -462,10 +489,21 @@ class astroImage(object):
                                            "353":{"outUnit":"MJy/sr", "value":287.450}, "217":{"outUnit":"MJy/sr", "value":483.690},\
                                            "143":{"outUnit":"MJy/sr", "value":371.74}, "100":{"outUnit":"MJy/sr", "value":244.1}},\
                                  "GALEX":{"FUV":{"outUnit":"Jy/pix", "value":1.076e-4}, "NUV":{"outUnit":"Jy/pix", "value":3.373e-5}},# Morriset 2007 \
+                                 "2MASS":{"J":{"outUnit":"Jy/pix", "value":1594.0}, "H":{"outUnit":"Jy/pix", "value":1024.0}, "Ks":{"outUnit":"Jy/pix", "value":666.7}}, # Cohen 2002
+                                 "WISE":{"3.4":{"outUnit":"Jy/pix", "value":1.9350e-6}, "4.6":{"outUnit":"Jy/pix", "value":2.7048e-6}, "12":{"outUnit":"Jy/pix", "value":1.8326e-6}, "22":{"outUnit":"Jy/pix", "value":5.2269e-5}},\
                                     } 
         
         if instrument is not None and band is not None:
-            return instrumentConversions[instrument][band]["outUnit"], instrumentConversions[instrument][band]["value"]
+            if instrument == "WISE":
+                print("Conversion assuming ALLWISE values")
+            if instrument == "2MASS":
+                if "MAGZP" in self.header:
+                    conversion = 10.0**(-self.header["MAGZP"]/2.5) * instrumentConversions[instrument][band]["value"]
+                else:
+                    raise Exception("2MASS conversion requires MAGZP keyword in header")
+                return instrumentConversions[instrument][band]["outUnit"], conversion
+            else:
+                return instrumentConversions[instrument][band]["outUnit"], instrumentConversions[instrument][band]["value"]
         else:
             raise Exception("Unable to provide instrumental unit, module error - report")
         
@@ -479,18 +517,20 @@ class astroImage(object):
                  "Jy/arcsec^2":["Jy/arcsec^2", "Jy arcsec^-2", "Jy arcsec-2", "Jy arcsec**-2"],\
                  "mJy/arcsec^2":["mJy/arcsec^2", "mJy arcsec^-2", "mJy arcsec-2", "mJy/arcsec**2"], \
                  "MJy/sr":["MJy/sr", "MJy per sr", "MJy sr^-1", "MJy sr-1", "MJy sr**-1", "MJy / sr"],\
-                 "Jy/beam":["Jy/beam", "Jy beam^-1", "Jy beam-1", "Jy beam**-1"],\
-                 "mJy/beam":["mJy/beam", "mJy beam^-1", "mJy beam-1", "mJy beam**-1"],\
+                 "Jy/beam":["Jy/beam", "Jy beam^-1", "Jy beam-1", "Jy beam**-1", "Jy / beam"],\
+                 "mJy/beam":["mJy/beam", "mJy beam^-1", "mJy beam-1", "mJy beam**-1", "mJy / beam"],\
                  "Jy/pix":["Jy/pix", "Jy pix^-1", "Jy pix-1", "Jy pix**-1", "Jy/pixel", "Jy pixel^-1", "Jy pixel-1", "Jy pixel**-1", "Jy / pix"],\
                  "mJy/pix":["mJy/pix", "mJy/pixel", "mJy pix^-1", "mJy pix-1", "mJy pix**-1", "mJy pixel^-1", "mJy pixel-1", "mJy pixel**-1"],\
                  "uK_CMB":["uK_CMB", "uK CMB"],\
                  "K_CMB":["K_CMB", "K CMB"],\
+                 "maggy":["maggy","maggies"],\
+                 "nanomaggy":["nanomaggy", "nanomaggies"],\
                  }
         
         # is the unit surface brightness or not
         if SBinfo:
             masterGroupSB = {"other":True, "Jy/arcsec^2":True, "mJy/arcsec^2":True, "MJy/sr":True, "Jy/beam":True, "mJy/beam":True,\
-                             "Jy/pix":False, "mJy/pix":False, "uK_CMB":True, "K_CMB":True}
+                             "Jy/pix":False, "mJy/pix":False, "uK_CMB":True, "K_CMB":True, "maggy":False, "nanomaggy":False}
             SBunits = {}
             for unitClass in units:
                 for unit in units[unitClass]:
@@ -565,7 +605,7 @@ class astroImage(object):
         # function to get pixel size
         WCSinfo = wcs.WCS(self.header)
         pixSizes = wcs.utils.proj_plane_pixel_scales(WCSinfo)*3600.0
-        if np.abs(pixSizes[0]-pixSizes[1]) > 0.0002:
+        if np.abs(pixSizes[0]-pixSizes[1])/np.min(pixSizes) > 0.01:
             raise ValueError("PANIC - program does not cope with non-square pixels")
         self.pixSize = round(pixSizes[0], 6) * u.arcsecond
         return round(pixSizes[0], 6)
@@ -2085,6 +2125,7 @@ class astroImage(object):
                             phot_table[sourceName+"_aperture_mean_error"].unit = self.unit
                     else:
                          # modify the unit
+                        programedUnits = self.programmedUnits()
                         for unitClass in programedUnits:
                             if self.unit in programedUnits[unitClass]:
                                 newUnit = self.unit.split("/pix")[0]
@@ -2558,7 +2599,8 @@ class astroImage(object):
                 # see if in a pre-progammed unit
                 if oldUnit not in allUnits:
                     if verbose:
-                        print("Image Unit: ", oldUnit, " not programmed - result maybe unreliable")
+                        if self.standardInstrumentalUnit(self.instrument, self.header['BUNIT']) is False:
+                            print("Image Unit: ", oldUnit, " not programmed - result maybe unreliable")
                 if newUnit not in allUnits:
                     if verbose:
                         print("Image Unit: ", newUnit, " not programmed - result maybe unreliable")
@@ -2651,6 +2693,16 @@ class astroImage(object):
                     currentWavelength = self.standardCentralWavelengths(instrument=self.instrument, band=self.band)
                     conversion = conversion.to(u.Jy/u.sr, equivalencies=cmbUnits.cmb_equivalencies((con.c/currentWavelength).to(u.GHz)))
                     
+                elif oldUnit in units["maggy"] or oldUnit in units["nanomaggy"]:
+                    zero_point_star_equiv = u.zero_point_flux(3631.*u.Jy)
+                    if oldUnit in units["maggy"]:
+                        conversion = 1.0*u.maggy
+                    elif oldUnit in units["nanomaggy"]:
+                        conversion = 1.0 * u.nanomaggy
+                    conversion = conversion.to(u.Jy, zero_point_star_equiv) 
+                    pixArea = self.pixSize * self.pixSize
+                    conversion = conversion / pixArea
+
                 else:
                     raise ValueError("Unit not programmed: ", oldUnit)
                                 
@@ -2674,6 +2726,13 @@ class astroImage(object):
                     conversion = conversion.to(u.Jy/u.arcsecond**2.0).value * 1000.0
                 elif newUnit in units["MJy/sr"]:
                     conversion = conversion.to(u.Jy/u.sr).value * 1.0e-6
+                elif newUnit in units["maggy"] or newUnit in units["nanomaggy"]:
+                    zero_point_star_equiv = u.zero_point_flux(3631.*u.Jy)
+                    pixArea = self.pixSize * self.pixSize
+                    if newUnit in units["maggy"]:
+                        conversion = (conversion * pixArea).to(u.mgy, zero_point_star_equiv)
+                    else:
+                        conversion = (conversion * pixArea).to(u.nanomaggy, zero_point_star_equiv)
                 elif newUnit == "pW" and self.instrument == "SCUBA-2":
                     conversion = (conversion * beamAreas[self.instrument][self.band]).value
                     conversion = conversion / scubaConversions[self.band]['Jy/beam']
