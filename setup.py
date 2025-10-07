@@ -2,7 +2,7 @@ from distutils.core import setup
 setup(
   name = 'astroIm',         # How you named your package folder (MyLib)
   packages = ['astroIm'],   # Chose the same as "name"
-  version = '0.6',      # Start with a small number and increase it with every change you make
+  version = '0.7',      # Start with a small number and increase it with every change you make
   license='MIT',        # Chose a license from here: https://help.github.com/articles/licensing-a-repository
   description = 'Astropy Wrapper and specialised functions for FIR/Submm Astro Images',   # Give a short description about your library
   author = 'Matthew Smith',                   # Type in your name
