@@ -958,13 +958,20 @@ class astroImage(object):
         # function to select pixels within an elliptical aperture
         
         # import required modules
-        from photutils import aperture_photometry
+        import photutils
+        if photutils.__version__ < '2.0.0':
+            from photutils import aperture_photometry
+            from photutils import SkyEllipticalAnnulus
+            from photutils import EllipticalAnnulus
+        else:
+            from photutils.aperture import aperture_photometry
+            from photutils.aperture import SkyEllipticalAnnulus
+            from photutils.aperture import EllipticalAnnulus
         from astropy.table import Column
         from astropy.table import join as tableJoin
         from astropy.table import Table
         from astropy.coordinates import SkyCoord
-        from photutils import SkyEllipticalAnnulus
-        from photutils import EllipticalAnnulus
+        
         
         # if axis ratio has been set then calculate minor
         if inner is None or outer is None:
@@ -1604,7 +1611,11 @@ class astroImage(object):
         # function to perform photometry
         
         # import required modules
-        from photutils import aperture_photometry
+        import photutils
+        if photutils.__version__ < '2.0.0':
+            from photutils import aperture_photometry
+        else:
+            from photutils.aperture import aperture_photometry
         from astropy.table import Column
         from astropy.table import join as tableJoin
         from astropy.table import Table
@@ -1616,23 +1627,44 @@ class astroImage(object):
         
         # import relevant photutil function
         if mode == "circle":
-            from photutils import SkyCircularAperture
-            from photutils import CircularAperture as PixCircularAperture
-            if localBackSubtract:
-                from photutils import SkyCircularAnnulus
-                from photutils import CircularAnnulus
+            if photutils.__version__ < '2.0.0':
+                from photutils import SkyCircularAperture
+                from photutils import CircularAperture as PixCircularAperture
+                if localBackSubtract:
+                    from photutils import SkyCircularAnnulus
+                    from photutils import CircularAnnulus
+            else:
+                from photutils.aperture import SkyCircularAperture
+                from photutils.aperture import CircularAperture as PixCircularAperture
+                if localBackSubtract:
+                    from photutils.aperture import SkyCircularAnnulus
+                    from photutils.aperture import CircularAnnulus
         elif mode == "ellipse":
-            from photutils import SkyEllipticalAperture
-            from photutils import EllipticalAperture as PixEllipticalAperture
-            if localBackSubtract:
-                from photutils import SkyEllipticalAnnulus
-                from photutils import EllipticalAnnulus
+            if photutils.__version__ < '2.0.0':
+                from photutils import SkyEllipticalAperture
+                from photutils import EllipticalAperture as PixEllipticalAperture
+                if localBackSubtract:
+                    from photutils import SkyEllipticalAnnulus
+                    from photutils import EllipticalAnnulus
+            else:
+                from photutils.aperture import SkyEllipticalAperture
+                from photutils.aperture import EllipticalAperture as PixEllipticalAperture
+                if localBackSubtract:
+                    from photutils.aperture import SkyEllipticalAnnulus
+                    from photutils.aperture import EllipticalAnnulus
         elif mode == "rectangle":
-            from photutils import SkyRectangularAperture
-            from photutils import RectangularAperture as PixRectangularAperture
-            if localBackSubtract:
-                from photutils import SkyRectangularAnnulus
-                from photutils import RectangularAnnulus
+            if photutils.__version__ < '2.0.0':
+                from photutils import SkyRectangularAperture
+                from photutils import RectangularAperture as PixRectangularAperture
+                if localBackSubtract:
+                    from photutils import SkyRectangularAnnulus
+                    from photutils import RectangularAnnulus
+            else:
+                from photutils.aperture import SkyRectangularAperture
+                from photutils.aperture import RectangularAperture as PixRectangularAperture
+                if localBackSubtract:
+                    from photutils.aperture import SkyRectangularAnnulus
+                    from photutils.aperture import RectangularAnnulus
 
         # if names is not none, see if a list, if not make it one
         if names is not None:
@@ -2065,8 +2097,12 @@ class astroImage(object):
             else:
                 # if first object create master table, otherwise append line.
                 if i == 0:
-                    phot_xcenter = [ind_phot_table['xcenter'][0].value]
-                    phot_ycenter = [ind_phot_table['ycenter'][0].value]
+                    if hasattr(ind_phot_table['xcenter'][0], 'value'):
+                        phot_xcenter = [ind_phot_table['xcenter'][0].value]
+                        phot_ycenter = [ind_phot_table['ycenter'][0].value]
+                    else:
+                        phot_xcenter = [ind_phot_table['xcenter'][0]]
+                        phot_ycenter = [ind_phot_table['ycenter'][0]]
                     if "sky_center" in ind_phot_table.colnames:
                         phot_sky_center = [ind_phot_table['sky_center'][0]]
                     phot_apsum = [ind_phot_table['aperture_sum'][0]]
@@ -2079,8 +2115,12 @@ class astroImage(object):
                     #ind_phot_table['id'][0] = i+1
                     #phot_table.add_row(ind_phot_table[-1])
                     #nPixTable.add_row(ind_nPixTable[-1])
-                    phot_xcenter.append(ind_phot_table['xcenter'][0].value)
-                    phot_ycenter.append(ind_phot_table['ycenter'][0].value)
+                    if hasattr(ind_phot_table['xcenter'][0], 'value'):
+                        phot_xcenter.append(ind_phot_table['xcenter'][0].value)
+                        phot_ycenter.append(ind_phot_table['ycenter'][0].value)
+                    else:
+                        phot_xcenter.append(ind_phot_table['xcenter'][0])
+                        phot_ycenter.append(ind_phot_table['ycenter'][0])
                     if "sky_center" in ind_phot_table.colnames:
                         phot_sky_center.append(ind_phot_table['sky_center'][0])
                     phot_apsum.append(ind_phot_table['aperture_sum'][0])
@@ -3262,7 +3302,7 @@ class astroImage(object):
     
     ###############################################################################################################
 
-    def cutout(self, centre, size, copy=False):
+    def cutout(self, centre, size, makeCopy=False):
         # function to create a cutout of the image
         
         # import astropy cutout routing
@@ -3293,7 +3333,7 @@ class astroImage(object):
         WCSinfo = wcs.WCS(self.header)
             
         # create cutout
-        cutoutOut = Cutout2D(self.image, centre, newSize, wcs=WCSinfo, mode='partial', fill_value=np.nan, copy=copy)
+        cutoutOut = Cutout2D(self.image, centre, newSize, wcs=WCSinfo, mode='partial', fill_value=np.nan, copy=makeCopy)
        
         # create new header
         cutHeader = self.header.copy()
